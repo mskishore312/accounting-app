@@ -45,23 +45,9 @@ app.*.map.json
 # Large binary files and builds
 *.apk
 *.zip
-*.db.backup
-accounting_app.db.backup
-
-# UI Design files (large images)
-UI Designs/
-
-# Old app builds
-old_app/
 
 # Build artifacts
 flutter_windows.zip
 
-# Database backups
-*.db.backup
-
 # Local files
 local.properties
-
-# Quest files
-.qoder/
