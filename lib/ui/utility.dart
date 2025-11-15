@@ -201,9 +201,7 @@ class DeleteCompanyScreen extends StatefulWidget {
 
 class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
   List<Map<String, dynamic>> companies = [];
-  Set<int> selectedCompanies = {};
   bool isLoading = true;
-  bool isSelectionMode = false;
 
   @override
   void initState() {
@@ -230,70 +228,38 @@ class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
     }
   }
 
-  void _toggleSelectionMode() {
-    setState(() {
-      isSelectionMode = !isSelectionMode;
-      if (!isSelectionMode) {
-        selectedCompanies.clear();
-      }
-    });
-  }
-
-  void _toggleCompanySelection(int companyId) {
-    setState(() {
-      if (selectedCompanies.contains(companyId)) {
-        selectedCompanies.remove(companyId);
-      } else {
-        selectedCompanies.add(companyId);
-      }
-    });
-  }
-
-  void _selectAll() {
-    setState(() {
-      selectedCompanies = Set.from(companies.map((c) => c['id'] as int));
-    });
-  }
-
-  void _deselectAll() {
-    setState(() {
-      selectedCompanies.clear();
-    });
-  }
-
-  void _showDeleteConfirmationDialog() {
-    final selectedCompanyNames = companies
-        .where((c) => selectedCompanies.contains(c['id']))
-        .map((c) => c['name'] as String)
-        .toList();
-
+  void _showDeleteConfirmationDialog(int companyId, String companyName) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(
-            selectedCompanies.length == 1
-                ? 'Delete Company?'
-                : 'Delete ${selectedCompanies.length} Companies?',
-          ),
+          title: const Text('Delete Company?'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Warning: All data for the following companies will be permanently deleted from this device. This action cannot be undone.',
-                style: TextStyle(color: Colors.red),
+                'Warning: All data for this company will be permanently deleted from this device. This action cannot be undone.',
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
               const Text(
-                'Companies to be deleted:',
+                'Company to be deleted:',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              ...selectedCompanyNames.map((name) => Padding(
-                padding: const EdgeInsets.only(left: 16, bottom: 4),
-                child: Text('• $name'),
-              )),
+              Padding(
+                padding: const EdgeInsets.only(left: 16),
+                child: Text(
+                  '• $companyName',
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Do you really want to delete this company?',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ],
           ),
           actions: [
@@ -301,16 +267,16 @@ class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
               onPressed: () {
                 Navigator.of(context).pop();
               },
-              child: const Text('Cancel'),
+              child: const Text('No, Cancel'),
             ),
             TextButton(
               onPressed: () async {
                 Navigator.of(context).pop();
-                await _deleteSelectedCompanies();
+                await _deleteCompany(companyId, companyName);
               },
               child: const Text(
-                'Yes, Delete All',
-                style: TextStyle(color: Colors.red),
+                'Yes, Delete',
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -319,42 +285,31 @@ class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
     );
   }
 
-  Future<void> _deleteSelectedCompanies() async {
-    setState(() {
-      isLoading = true;
-    });
-
+  Future<void> _deleteCompany(int companyId, String companyName) async {
     try {
-      for (final companyId in selectedCompanies) {
-        await StorageService.deleteCompany(companyId);
-      }
+      await StorageService.deleteCompany(companyId);
 
-      final deletedCount = selectedCompanies.length;
-      
-      // Navigate back to Gateway
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const Gateway()),
-        (route) => false,
-      );
-
-      // Show confirmation message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            deletedCount == 1
-                ? 'Company deleted successfully'
-                : '$deletedCount companies deleted successfully',
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      setState(() {
-        isLoading = false;
-      });
+      // Show success message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting companies: $e')),
+          SnackBar(
+            content: Text('Company "$companyName" deleted successfully'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+
+        // Reload the company list to reflect the deletion
+        await _loadCompanies();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting company: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     }
@@ -393,31 +348,6 @@ class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
             ),
           ],
         ),
-        actions: [
-          if (isSelectionMode) ...[
-            IconButton(
-              icon: Icon(
-                selectedCompanies.length == companies.length
-                    ? Icons.deselect
-                    : Icons.select_all,
-              ),
-              onPressed: selectedCompanies.length == companies.length
-                  ? _deselectAll
-                  : _selectAll,
-            ),
-            TextButton(
-              onPressed: _toggleSelectionMode,
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ] else
-            IconButton(
-              icon: const Icon(Icons.checklist),
-              onPressed: _toggleSelectionMode,
-            ),
-        ],
       ),
       body: Column(
         children: [
@@ -431,12 +361,10 @@ class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
                 bottomRight: Radius.circular(15),
               ),
             ),
-            child: Text(
-              isSelectionMode
-                  ? '${selectedCompanies.length} Selected'
-                  : 'Select Company to Delete',
+            child: const Text(
+              'Select Company to Delete',
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -460,50 +388,39 @@ class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
                         itemBuilder: (context, index) {
                           final company = companies[index];
                           final companyId = company['id'] as int;
-                          final isSelected = selectedCompanies.contains(companyId);
-                          
+                          final companyName = company['name'] as String;
+
                           return Container(
                             margin: const EdgeInsets.only(bottom: 16),
                             height: 56,
                             decoration: BoxDecoration(
-                              color: isSelected
-                                  ? const Color(0xFF2C5545)
-                                  : const Color(0xFF4C7380),
+                              color: const Color(0xFF4C7380),
                               borderRadius: BorderRadius.circular(4),
-                              border: isSelected
-                                  ? Border.all(color: Colors.white, width: 2)
-                                  : null,
                             ),
                             child: Material(
                               color: Colors.transparent,
                               child: InkWell(
                                 onTap: () {
-                                  if (isSelectionMode) {
-                                    _toggleCompanySelection(companyId);
-                                  }
+                                  _showDeleteConfirmationDialog(companyId, companyName);
                                 },
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 16),
                                   child: Row(
                                     children: [
-                                      if (isSelectionMode)
-                                        Checkbox(
-                                          value: isSelected,
-                                          onChanged: (_) {
-                                            _toggleCompanySelection(companyId);
-                                          },
-                                          activeColor: Colors.white,
-                                          checkColor: const Color(0xFF2C5545),
-                                        ),
                                       Expanded(
                                         child: Text(
-                                          company['name'] as String,
+                                          companyName,
                                           style: const TextStyle(
                                             fontSize: 18,
                                             fontWeight: FontWeight.w500,
                                             color: Colors.white,
                                           ),
                                         ),
+                                      ),
+                                      const Icon(
+                                        Icons.delete_outline,
+                                        color: Colors.white70,
+                                        size: 24,
                                       ),
                                     ],
                                   ),
@@ -516,17 +433,6 @@ class _DeleteCompanyScreenState extends State<DeleteCompanyScreen> {
           ),
         ],
       ),
-      floatingActionButton: isSelectionMode && selectedCompanies.isNotEmpty
-          ? FloatingActionButton.extended(
-              onPressed: _showDeleteConfirmationDialog,
-              backgroundColor: Colors.red,
-              icon: const Icon(Icons.delete),
-              label: Text(
-                'Delete (${selectedCompanies.length})',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            )
-          : null,
     );
   }
 }

@@ -25,7 +25,10 @@ class StorageService {
       path,
       version: 6,
       onCreate: _onCreate,
-      onUpgrade: _onUpgrade
+      onUpgrade: _onUpgrade,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+      }
     );
   }
 

@@ -76,32 +76,38 @@ class _LedgerCreationState extends State<LedgerCreation> {
     try {
       final company = await StorageService.getSelectedCompany();
       if (company != null && company['books_from'] != null) {
-        _booksBeginningDate = company['books_from'] as String;
+        final booksFromStr = company['books_from'] as String;
 
         // Try to parse date - could be YYYY-MM-DD or DD/MM/YYYY
-        final parts = _booksBeginningDate!.split(RegExp(r'[-/]'));
+        final parts = booksFromStr.split(RegExp(r'[-/]'));
 
         if (parts.length == 3) {
+          DateTime? parsedDate;
+
           // Check if format is YYYY-MM-DD (year comes first, will be 4 digits)
           if (parts[0].length == 4) {
-            _booksBeginningDateTime = DateTime(
+            parsedDate = DateTime(
               int.parse(parts[0]), // year
               int.parse(parts[1]), // month
               int.parse(parts[2]), // day
             );
           } else {
             // Assume DD/MM/YYYY format
-            _booksBeginningDateTime = DateTime(
+            parsedDate = DateTime(
               int.parse(parts[2]), // year
               int.parse(parts[1]), // month
               int.parse(parts[0]), // day
             );
           }
 
-          // Set default stock date to books beginning date
+          // Update state with all date-related values
           setState(() {
-            _stockDate = _booksBeginningDateTime!;
+            _booksBeginningDate = booksFromStr;
+            _booksBeginningDateTime = parsedDate;
+            _stockDate = parsedDate!;
           });
+
+          debugPrint('Books beginning date loaded: $_booksBeginningDate, DateTime: $_booksBeginningDateTime');
         }
       }
     } catch (e) {
@@ -347,13 +353,18 @@ class _LedgerCreationState extends State<LedgerCreation> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text('Amount (Optional):', style: TextStyle(fontSize: 16, color: Colors.black)),
+            Text(
+              _booksBeginningDateTime != null
+                  ? 'Opening Balance (as on ${_formatDate(_booksBeginningDateTime!)} - Books Beginning From):'
+                  : 'Opening Balance (Optional):',
+              style: const TextStyle(fontSize: 16, color: Colors.black),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _balanceController,
               keyboardType: TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
-                hintText: 'Enter amount',
+                hintText: 'Enter opening balance',
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(
@@ -362,6 +373,7 @@ class _LedgerCreationState extends State<LedgerCreation> {
               ),
               onChanged: (value) {
                 // Auto-update stock valuation section when amount is entered for Stock-in-Hand ledgers
+                debugPrint('DEBUG: onChanged called. Value: $value, showStockSection: $_showStockSection, booksBeginDateTime: $_booksBeginningDateTime');
                 if (_showStockSection && _booksBeginningDateTime != null) {
                   final dateStr = '${_booksBeginningDateTime!.year}-${_booksBeginningDateTime!.month.toString().padLeft(2, '0')}-${_booksBeginningDateTime!.day.toString().padLeft(2, '0')}';
                   debugPrint('Amount changed: $value, Stock section shown: $_showStockSection, Books date: $dateStr');
@@ -489,6 +501,13 @@ class _LedgerCreationState extends State<LedgerCreation> {
                               // Keep original format if parsing fails
                             }
 
+                            // Check if this is the books beginning date
+                            final booksBeginDateStr = _booksBeginningDateTime != null
+                                ? '${_booksBeginningDateTime!.year}-${_booksBeginningDateTime!.month.toString().padLeft(2, '0')}-${_booksBeginningDateTime!.day.toString().padLeft(2, '0')}'
+                                : null;
+                            final isBooksBeginDate = booksBeginDateStr != null && val['date'] == booksBeginDateStr;
+                            debugPrint('DEBUG DISPLAY: Valuation date: ${val['date']}, Books begin date: $booksBeginDateStr, Is match: $isBooksBeginDate');
+
                             return ListTile(
                               dense: true,
                               leading: CircleAvatar(
@@ -507,8 +526,14 @@ class _LedgerCreationState extends State<LedgerCreation> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Date: $displayDate',
-                                    style: const TextStyle(fontSize: 12, color: Colors.black87),
+                                    isBooksBeginDate
+                                        ? 'Date: $displayDate (Books Beginning From)'
+                                        : 'Date: $displayDate',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.black87,
+                                      fontWeight: isBooksBeginDate ? FontWeight.w600 : FontWeight.normal,
+                                    ),
                                   ),
                                   if (val['notes'] != null && val['notes'].toString().isNotEmpty)
                                     Text(
