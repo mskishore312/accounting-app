@@ -27,11 +27,14 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Get dependencies
-        run: flutter pub get
+      - name: Clean and get dependencies
+        run: |
+          rm -f pubspec.lock
+          flutter clean
+          flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
