@@ -1,0 +1,438 @@
+/* ─── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --primary: #1a237e;
+  --primary-light: #283593;
+  --accent: #ff6f00;
+  --green: #2e7d32;
+  --red: #c62828;
+  --blue: #1565c0;
+  --purple: #6a1b9a;
+  --bg: #f5f5f5;
+  --card: #ffffff;
+  --border: #e0e0e0;
+  --text: #212121;
+  --muted: #757575;
+  --nav-height: 64px;
+  --header-height: 56px;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+#root { height: 100%; }
+
+/* ─── App Shell ────────────────────────────────────────────── */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 480px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: var(--nav-height);
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ─── Page ─────────────────────────────────────────────────── */
+.page { padding-bottom: 1.5rem; }
+
+.page-header {
+  background: var(--primary);
+  color: white;
+  padding: 1rem 1rem 0.875rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.page-title { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.3px; }
+.page-date { font-size: 0.8rem; opacity: 0.85; }
+
+.header-btn {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ─── Home Summary Cards ───────────────────────────────────── */
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  padding: 0.875rem;
+}
+
+.summary-card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 0.875rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  border-left: 4px solid;
+}
+.summary-card.green { border-color: var(--green); }
+.summary-card.red   { border-color: var(--red); }
+.summary-card.blue  { border-color: var(--blue); }
+.summary-card.purple { border-color: var(--purple); }
+
+.summary-label { font-size: 0.72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.summary-value { font-size: 1.1rem; font-weight: 700; margin-top: 0.25rem; color: var(--text); }
+.summary-sub   { font-size: 0.7rem; color: var(--muted); }
+
+/* ─── Section Title ────────────────────────────────────────── */
+.section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 0.5rem 1rem 0.35rem;
+}
+
+/* ─── Quick Actions ────────────────────────────────────────── */
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  padding: 0 0.875rem 0.5rem;
+}
+
+.quick-btn {
+  background: var(--card);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem 0.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  transition: transform 0.1s;
+}
+.quick-btn:active { transform: scale(0.95); }
+.quick-icon { font-size: 1.4rem; }
+
+/* ─── Voucher List ─────────────────────────────────────────── */
+.voucher-list { padding: 0 0.875rem; display: flex; flex-direction: column; gap: 0.5rem; }
+
+.voucher-item {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+.voucher-meta { display: flex; align-items: center; gap: 0.5rem; }
+
+.voucher-type-badge {
+  background: var(--primary);
+  color: white;
+  border-radius: 5px;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.voucher-type-badge.sales    { background: var(--green); }
+.voucher-type-badge.purchase { background: var(--red); }
+.voucher-type-badge.receipt  { background: var(--blue); }
+.voucher-type-badge.payment  { background: var(--purple); }
+
+.voucher-no { font-size: 0.8rem; color: var(--muted); }
+.voucher-amount { font-weight: 700; font-size: 0.95rem; }
+
+.see-all-btn {
+  background: none; border: none;
+  color: var(--primary); font-weight: 600;
+  font-size: 0.85rem; cursor: pointer;
+  padding: 0.5rem 0; text-align: left;
+}
+
+.empty-state {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ─── Bottom Nav ───────────────────────────────────────────── */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
+  height: var(--nav-height);
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  display: flex;
+  z-index: 100;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.07);
+}
+
+.nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.5rem 0;
+  transition: color 0.15s;
+}
+.nav-item.active { color: var(--primary); }
+.nav-icon { font-size: 1.3rem; }
+.nav-label { text-transform: uppercase; letter-spacing: 0.3px; }
+
+/* ─── Forms ────────────────────────────────────────────────── */
+.form { padding: 1rem; display: flex; flex-direction: column; gap: 0.875rem; }
+.form.card { background: var(--card); margin: 0.875rem; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+
+.field { display: flex; flex-direction: column; gap: 0.3rem; }
+.field-row { display: flex; gap: 0.75rem; }
+.flex-1 { flex: 1; }
+
+.label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.input {
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.95rem;
+  color: var(--text);
+  background: var(--card);
+  width: 100%;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.input:focus { border-color: var(--primary); }
+.input-large { font-size: 1.4rem; font-weight: 700; text-align: right; padding: 0.75rem 1rem; }
+
+textarea.input { resize: none; }
+
+select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23757575' d='M6 8L0 0h12z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.75rem center; padding-right: 2rem; }
+
+/* ─── Voucher Type Tabs ────────────────────────────────────── */
+.type-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.type-tab {
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  border-radius: 20px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 0.15s;
+}
+.type-tab.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+/* ─── GST ──────────────────────────────────────────────────── */
+.gst-section {
+  background: #f3f4ff;
+  border-radius: 10px;
+  padding: 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border: 1.5px solid #c5cae9;
+}
+
+.toggle-row { display: flex; align-items: center; justify-content: space-between; }
+
+.toggle-btn {
+  border: none; border-radius: 20px;
+  padding: 0.3rem 1rem;
+  font-size: 0.8rem; font-weight: 700;
+  cursor: pointer; transition: all 0.15s;
+}
+.toggle-btn.on  { background: var(--primary); color: white; }
+.toggle-btn.off { background: var(--border); color: var(--muted); }
+
+.gst-rate-tabs { display: flex; gap: 0.4rem; }
+.gst-tab {
+  flex: 1;
+  border: 1.5px solid var(--border);
+  background: white;
+  border-radius: 8px;
+  padding: 0.4rem;
+  font-size: 0.8rem; font-weight: 700;
+  cursor: pointer; color: var(--muted);
+}
+.gst-tab.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+.gst-breakdown {
+  background: white;
+  border-radius: 8px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+.gst-row { display: flex; justify-content: space-between; color: var(--muted); }
+.gst-row.total { font-weight: 700; color: var(--text); border-top: 1px solid var(--border); padding-top: 0.35rem; margin-top: 0.1rem; }
+
+/* ─── Submit ───────────────────────────────────────────────── */
+.submit-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 0.9rem;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  transition: background 0.15s;
+}
+.submit-btn:active { background: var(--primary-light); }
+
+/* ─── Success Toast ────────────────────────────────────────── */
+.success-toast {
+  background: var(--green);
+  color: white;
+  text-align: center;
+  padding: 0.75rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ─── Ledger List ──────────────────────────────────────────── */
+.search-input {
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 0.65rem 1rem;
+  font-size: 0.95rem;
+  width: calc(100% - 1.75rem);
+  margin: 0.875rem;
+  outline: none;
+  font-family: inherit;
+}
+
+.ledger-list { padding: 0 0.875rem; display: flex; flex-direction: column; gap: 0.5rem; }
+
+.ledger-item {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.ledger-name  { font-weight: 600; font-size: 0.95rem; }
+.ledger-group { font-size: 0.75rem; color: var(--muted); margin-top: 0.1rem; }
+.ledger-gstin { font-size: 0.7rem; color: var(--blue); margin-top: 0.1rem; }
+.ledger-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.3rem; }
+.ledger-balance { font-size: 0.9rem; font-weight: 700; }
+.ledger-balance.dr { color: var(--green); }
+.ledger-balance.cr { color: var(--red); }
+.bal-type { font-size: 0.7rem; font-weight: 600; }
+
+.delete-btn {
+  background: none; border: none;
+  cursor: pointer; font-size: 1rem;
+  opacity: 0.5;
+  padding: 0.2rem;
+}
+.delete-btn:active { opacity: 1; }
+
+/* ─── Day Book ─────────────────────────────────────────────── */
+.daybook-summary {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem 1rem 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.daybook-summary div { display: flex; gap: 0.4rem; }
+.daybook-summary strong { color: var(--text); }
+
+.daybook-item {
+  background: var(--card);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.daybook-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 1rem;
+  cursor: pointer;
+}
+.daybook-left  { display: flex; align-items: center; gap: 0.5rem; }
+.daybook-right { display: flex; align-items: center; gap: 0.5rem; }
+.daybook-amount { font-weight: 700; font-size: 0.95rem; }
+.expand-icon    { font-size: 0.65rem; color: var(--muted); }
+
+.daybook-detail {
+  border-top: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.entry-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.entry-table th { text-align: left; color: var(--muted); font-size: 0.7rem; text-transform: uppercase; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
+.entry-table td { padding: 0.3rem 0; }
+.entry-table td:last-child, .entry-table td:nth-child(2) { text-align: right; }
+
+.narration { font-size: 0.8rem; color: var(--muted); font-style: italic; }
+
+.delete-voucher-btn {
+  background: #ffebee;
+  border: 1px solid #ef9a9a;
+  color: var(--red);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
