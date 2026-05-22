@@ -3,6 +3,9 @@ import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/gateway.dart';
 import 'package:accounting_app/ui/company_settings_selection.dart';
 import 'package:accounting_app/ui/edit_company.dart';
+import 'package:accounting_app/ui/drive_sync_screen.dart';
+import 'package:accounting_app/ui/ai_settings_screen.dart';
+import 'package:accounting_app/ui/chat_screen.dart';
 
 class Utility extends StatelessWidget {
   const Utility({Key? key}) : super(key: key);
@@ -78,6 +81,42 @@ class Utility extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    _buildButton(
+                      'Assistant Chat',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ChatScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _buildButton(
+                      'AI Settings',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AiSettingsScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _buildButton(
+                      'Backup & Sync',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const DriveSyncScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
                     _buildButton(
                       'Company Edit',
                       onPressed: () {

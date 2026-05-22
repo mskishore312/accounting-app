@@ -1,41 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:accounting_app/ui/gateway.dart';
 import 'package:accounting_app/ui/options.dart';
 import 'data/storage_service.dart';
-import 'dart:io' show Platform;
 
-import 'package:sqflite_common_ffi/sqflite_ffi.dart' if (dart.library.html) 'package:accounting_app/web_stub.dart';
+// Platform DB init — web_stub wires sqflite_common_ffi_web; native_stub handles mobile/desktop
+import 'package:accounting_app/native_stub.dart' if (dart.library.html) 'package:accounting_app/web_stub.dart';
 import 'package:provider/provider.dart';
 import 'package:accounting_app/services/period_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize database based on platform
-  if (kIsWeb) {
-    // Web platform doesn't support sqflite directly
-    print('Running on web platform - database functionality will be limited');
-  } else {
-    try {
-      // For desktop platforms, initialize FFI
-      if (!Platform.isAndroid && !Platform.isIOS) {
-        // Initialize FFI for desktop platforms
-        sqfliteFfiInit();
-        databaseFactory = databaseFactoryFfi;
-      }
-      
-      // Initialize database by making a simple call to force initialization
-      await StorageService.getSelectedCompany();
-      
-      // Check and fix database schema for description field
-      await StorageService.checkAndFixDatabaseSchema();
-      
-      // Don't run cleanup during startup as it might cause issues
-      // The cleanup will run when accessing ledgers later
-    } catch (e) {
-      print('Error initializing database: $e');
-    }
+  // Initialize database (web: wasm FFI; mobile: auto; desktop: sqflite_ffi)
+  await initDatabase();
+  try {
+    await StorageService.getSelectedCompany();
+    await StorageService.checkAndFixDatabaseSchema();
+  } catch (e) {
+    print('DB init error: \$e');
   }
 
   // Initialize the period service

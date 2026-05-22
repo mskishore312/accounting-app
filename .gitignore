@@ -51,3 +51,8 @@ flutter_windows.zip
 
 # Local files
 local.properties
+
+# Generated sqflite web FFI files - rebuild with: dart run sqflite_common_ffi_web:setup
+web/sqflite_sw.js
+web/sqlite3.wasm
+

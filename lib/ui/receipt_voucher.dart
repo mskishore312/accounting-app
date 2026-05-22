@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/services/receipts_service.dart';
+import 'package:accounting_app/services/gemini_ocr_service.dart';
+import 'dart:convert';
 import 'package:accounting_app/ui/ledger_creation.dart';
 
 class ReceiptVoucher extends StatefulWidget {
@@ -14,6 +17,7 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
   final _formKey = GlobalKey<FormState>();
   final _voucherNoController = TextEditingController();
   final _narrationController = TextEditingController();
+  List<Map<String, dynamic>> _receipts = [];
   
   DateTime _selectedDate = DateTime.now();
   List<Map<String, dynamic>> _ledgers = [];
@@ -334,6 +338,132 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
         );
       }
     }
+  }
+
+
+  Future<void> _loadReceipts() async {
+    if (widget.voucherId == null) return;
+    final list = await ReceiptsService.getForVoucher(widget.voucherId!);
+    if (mounted) setState(() => _receipts = list);
+  }
+
+  Future<void> _attachReceiptFromCamera() async {
+    if (widget.voucherId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please save the voucher first, then attach receipts.')),
+      );
+      return;
+    }
+    final id = await ReceiptsService.captureFromCamera(widget.voucherId!);
+    if (id != null) _loadReceipts();
+  }
+
+  Future<void> _attachReceiptFromGallery() async {
+    if (widget.voucherId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please save the voucher first, then attach receipts.')),
+      );
+      return;
+    }
+    final id = await ReceiptsService.pickFromGallery(widget.voucherId!);
+    if (id != null) _loadReceipts();
+  }
+
+
+  Future<void> _runOcr(Map<String, dynamic> r) async {
+    final localPath = r['local_path'] as String?;
+    if (localPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No local file to process.')),
+      );
+      return;
+    }
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 16),
+          Text('Reading receipt...'),
+        ]),
+      ),
+    );
+    final result = await GeminiOcrService.extractFromImage(
+      receiptId: r['id'] as int,
+      localPath: localPath,
+    );
+    if (!mounted) return;
+    Navigator.pop(context); // dismiss progress dialog
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('OCR failed. Check API key in Utility > AI Settings.')),
+      );
+      _loadReceipts();
+      return;
+    }
+    // Show extracted result in a dialog with copy-to-narration option
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Receipt extracted'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _ocrRow('Vendor', result['vendor_name']),
+              _ocrRow('GSTIN', result['vendor_gstin']),
+              _ocrRow('Invoice #', result['invoice_number']),
+              _ocrRow('Date', result['invoice_date']),
+              _ocrRow('Total', result['total_amount']?.toString()),
+              _ocrRow('Taxable', result['taxable_amount']?.toString()),
+              _ocrRow('CGST', result['cgst_amount']?.toString()),
+              _ocrRow('SGST', result['sgst_amount']?.toString()),
+              _ocrRow('IGST', result['igst_amount']?.toString()),
+              _ocrRow('Confidence', result['confidence']),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              final v = result['vendor_name']?.toString() ?? '';
+              final inv = result['invoice_number']?.toString() ?? '';
+              final dt = result['invoice_date']?.toString() ?? '';
+              _narrationController.text =
+                  'Receipt: $v ${inv.isNotEmpty ? "Inv $inv " : ""}${dt.isNotEmpty ? "dt $dt" : ""}'.trim();
+              Navigator.pop(context);
+            },
+            child: const Text('Use as narration'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    _loadReceipts();
+  }
+
+  Widget _ocrRow(String label, dynamic value) {
+    if (value == null || value.toString().isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 90, child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold))),
+          Expanded(child: Text(value.toString())),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteReceipt(Map<String, dynamic> r) async {
+    await ReceiptsService.delete(r['id'] as int, r['local_path'] as String?);
+    _loadReceipts();
   }
 
   Future<void> _saveVoucher() async {
@@ -1112,6 +1242,98 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                         ),
                       ),
                     ),
+                    
+                    
+                    // ===== RECEIPTS / IMAGE ATTACHMENTS =====
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Receipts :',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF2C5545)),
+                        ),
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.photo_camera, color: Color(0xFF2C5545)),
+                              tooltip: 'Capture from camera',
+                              onPressed: _attachReceiptFromCamera,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.photo_library, color: Color(0xFF2C5545)),
+                              tooltip: 'Pick from gallery',
+                              onPressed: _attachReceiptFromGallery,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (widget.voucherId == null)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF3CD),
+                          border: Border.all(color: const Color(0xFFFFE082)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'Save this voucher first, then you can attach receipt images.',
+                          style: TextStyle(color: Color(0xFF856404), fontSize: 13),
+                        ),
+                      )
+                    else if (_receipts.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF5F5F5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text('No receipts attached. Use the icons above to add.',
+                          style: TextStyle(color: Color(0xFF666666), fontSize: 13)),
+                      )
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _receipts.map((r) => Stack(
+                          children: [
+                            InkWell(
+                              onTap: () => _runOcr(r),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                width: 80, height: 80,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE0F2E9),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: const Color(0xFF2C5545)),
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.receipt_long, color: Color(0xFF2C5545), size: 24),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      (r['ocr_status'] as String? ?? 'pending') == 'completed' ? 'OCR ✓' : 'Tap OCR',
+                                      style: const TextStyle(fontSize: 10, color: Color(0xFF2C5545)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              right: -4, top: -4,
+                              child: IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.cancel, color: Colors.red, size: 18),
+                                onPressed: () => _deleteReceipt(r),
+                              ),
+                            ),
+                          ],
+                        )).toList(),
+                      ),
                     
                     const SizedBox(height: 32),
                     

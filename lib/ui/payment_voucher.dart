@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/services/receipts_service.dart';
 import 'package:accounting_app/ui/ledger_creation.dart';
 
 class PaymentVoucher extends StatefulWidget {
@@ -14,6 +15,7 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
   final _formKey = GlobalKey<FormState>();
   final _voucherNoController = TextEditingController();
   final _narrationController = TextEditingController();
+  List<Map<String, dynamic>> _receipts = [];
 
   DateTime _selectedDate = DateTime.now();
   List<Map<String, dynamic>> _ledgers = [];
@@ -337,6 +339,40 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
         );
       }
     }
+  }
+
+
+  Future<void> _loadReceipts() async {
+    if (widget.voucherId == null) return;
+    final list = await ReceiptsService.getForVoucher(widget.voucherId!);
+    if (mounted) setState(() => _receipts = list);
+  }
+
+  Future<void> _attachReceiptFromCamera() async {
+    if (widget.voucherId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please save the voucher first, then attach receipts.')),
+      );
+      return;
+    }
+    final id = await ReceiptsService.captureFromCamera(widget.voucherId!);
+    if (id != null) _loadReceipts();
+  }
+
+  Future<void> _attachReceiptFromGallery() async {
+    if (widget.voucherId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please save the voucher first, then attach receipts.')),
+      );
+      return;
+    }
+    final id = await ReceiptsService.pickFromGallery(widget.voucherId!);
+    if (id != null) _loadReceipts();
+  }
+
+  Future<void> _deleteReceipt(Map<String, dynamic> r) async {
+    await ReceiptsService.delete(r['id'] as int, r['local_path'] as String?);
+    _loadReceipts();
   }
 
   Future<void> _saveVoucher() async {

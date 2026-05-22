@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:accounting_app/data/storage_service.dart';
 
 /// Service for handling financial statement calculations and classifications
@@ -250,6 +251,7 @@ class FinancialStatementService {
       'Current Assets': [],
       'Loans & Advances': [],
       'Misc. Expenses': [],
+      'Suspense A/c': [],
     };
 
     for (var ledger in ledgers) {
@@ -283,6 +285,17 @@ class FinancialStatementService {
       }
     }
 
+    // Tally-style "Difference in Opening Balances": if Cr openings exceed Dr
+    // openings, the shortfall lives on the Assets side as a Suspense Dr entry.
+    final diff = await getOpeningBalanceDifference();
+    if (diff < -0.01) {
+      assets['Suspense A/c']!.add({
+        'name': 'Difference in Opening Balances',
+        'balance': diff.abs(),
+        'group': 'Suspense A/c',
+      });
+    }
+
     return assets;
   }
 
@@ -298,6 +311,7 @@ class FinancialStatementService {
       'Loans': [],
       'Bank Overdraft': [],
       'Current Liabilities': [],
+      'Suspense A/c': [],
     };
 
     for (var ledger in ledgers) {
@@ -329,7 +343,39 @@ class FinancialStatementService {
       }
     }
 
+    // Tally-style "Difference in Opening Balances" under Suspense A/c.
+    // Sum total Dr and Cr opening balances; the gap (if any) lives on the
+    // side that needs balancing. Dr > Cr -> show on Liabilities side.
+    final diff = await getOpeningBalanceDifference();
+    if (diff > 0.01) {
+      liabilities['Suspense A/c']!.add({
+        'name': 'Difference in Opening Balances',
+        'balance': diff,
+        'group': 'Suspense A/c',
+      });
+    }
+
     return liabilities;
+  }
+
+  /// Returns (Total Dr opening) - (Total Cr opening) across all ledgers.
+  /// Positive value -> needs balancing on Liabilities side (Suspense A/c Cr).
+  /// Negative value -> needs balancing on Assets side (Suspense A/c Dr).
+  static Future<double> getOpeningBalanceDifference() async {
+    final ledgers = await StorageService.getLedgers();
+    double drTotal = 0.0;
+    double crTotal = 0.0;
+    for (var ledger in ledgers) {
+      final opening = (ledger['balance'] as num?)?.toDouble() ?? 0.0;
+      if (opening == 0) continue;
+      final classification = ledger['classification'] as String? ?? '';
+      if (isDebitNature(classification)) {
+        drTotal += opening;
+      } else if (isCreditNature(classification)) {
+        crTotal += opening;
+      }
+    }
+    return drTotal - crTotal;
   }
 
   /// Calculate Trading Account (for Gross Profit calculation)

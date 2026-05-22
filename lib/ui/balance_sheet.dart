@@ -378,6 +378,13 @@ class _BalanceSheetState extends State<BalanceSheet> {
               _buildSubtotalRow('Total Misc. Expenses', miscExpensesTotal),
           ],
 
+          // Suspense A/c (Difference in Opening Balances when Cr > Dr)
+          if ((assetsData['Suspense A/c'] ?? []).isNotEmpty) ...[
+            _buildCategoryHeader('Suspense A/c'),
+            ...(assetsData['Suspense A/c'] ?? []).map((item) =>
+                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
+          ],
+
           if (totalAssets == 0)
             const Padding(
               padding: EdgeInsets.all(16),
@@ -455,6 +462,13 @@ class _BalanceSheetState extends State<BalanceSheet> {
                 _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
             if ((liabilitiesData['Current Liabilities'] ?? []).length > 1)
               _buildSubtotalRow('Total Current Liabilities', currentLiabilitiesTotal),
+          ],
+
+          // Suspense A/c (Difference in Opening Balances when Dr > Cr)
+          if ((liabilitiesData['Suspense A/c'] ?? []).isNotEmpty) ...[
+            _buildCategoryHeader('Suspense A/c'),
+            ...(liabilitiesData['Suspense A/c'] ?? []).map((item) =>
+                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
           ],
 
           if (totalLiabilities == 0 && netProfit == 0)

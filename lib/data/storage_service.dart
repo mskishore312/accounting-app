@@ -23,7 +23,7 @@ class StorageService {
     String path = join(dbPath, 'accounting_app.db');
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -132,8 +132,29 @@ class StorageService {
       )
     ''');
 
+    // Receipts table - stores image attachments for vouchers (receipts/payments/etc)
+    // Local file path + Google Drive file ID for cross-device sync
+    await db.execute('''
+      CREATE TABLE Receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voucher_id INTEGER NOT NULL,
+        local_path TEXT,
+        drive_file_id TEXT,
+        file_name TEXT,
+        mime_type TEXT,
+        file_size INTEGER,
+        ocr_status TEXT DEFAULT 'pending',
+        ocr_extracted_json TEXT,
+        sync_status TEXT DEFAULT 'pending',
+        uploaded_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (voucher_id) REFERENCES Vouchers(id) ON DELETE CASCADE
+      )
+    ''');
+
     // Create indexes
     await db.execute('CREATE INDEX idx_company_name ON Companies(name)');
+    await db.execute('CREATE INDEX idx_receipts_voucher ON Receipts(voucher_id);');
     await db.execute('CREATE INDEX idx_voucher_date ON Vouchers(voucher_date)');
     await db.execute('CREATE INDEX idx_company_settings ON CompanySettings(company_id, key)');
     await db.execute('CREATE INDEX idx_stock_valuations_date ON StockValuations(ledger_id, valuation_date)');
@@ -161,6 +182,26 @@ class StorageService {
           UNIQUE(company_id, key)
         )
       ''');
+    }
+    if (oldVersion < 7) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS Receipts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          voucher_id INTEGER NOT NULL,
+          local_path TEXT,
+          drive_file_id TEXT,
+          file_name TEXT,
+          mime_type TEXT,
+          file_size INTEGER,
+          ocr_status TEXT DEFAULT 'pending',
+          ocr_extracted_json TEXT,
+          sync_status TEXT DEFAULT 'pending',
+          uploaded_at TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (voucher_id) REFERENCES Vouchers(id) ON DELETE CASCADE
+        )
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_receipts_voucher ON Receipts(voucher_id)');
     }
     if (oldVersion < 6) {
       // Create StockValuations table
@@ -808,4 +849,78 @@ class StorageService {
       whereArgs: [valuationId]
     );
   }
+
+  // ========== RECEIPTS / IMAGE ATTACHMENTS ==========
+
+  /// Attach a receipt image to a voucher
+  static Future<int> insertReceipt(Map<String, dynamic> receipt) async {
+    final db = await _instance.database;
+    return await db.insert('Receipts', receipt);
+  }
+
+  /// Get all receipts for a voucher
+  static Future<List<Map<String, dynamic>>> getReceiptsByVoucher(int voucherId) async {
+    final db = await _instance.database;
+    return await db.query(
+      'Receipts',
+      where: 'voucher_id = ?',
+      whereArgs: [voucherId],
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  /// Update receipt (e.g. after Drive upload, OCR completion)
+  static Future<int> updateReceipt(int receiptId, Map<String, dynamic> updates) async {
+    final db = await _instance.database;
+    return await db.update(
+      'Receipts',
+      updates,
+      where: 'id = ?',
+      whereArgs: [receiptId],
+    );
+  }
+
+  /// Delete a receipt attachment
+  static Future<int> deleteReceipt(int receiptId) async {
+    final db = await _instance.database;
+    return await db.delete(
+      'Receipts',
+      where: 'id = ?',
+      whereArgs: [receiptId],
+    );
+  }
+
+  /// Get all receipts pending Drive upload
+  static Future<List<Map<String, dynamic>>> getReceiptsPendingSync() async {
+    final db = await _instance.database;
+    return await db.query(
+      'Receipts',
+      where: "sync_status = 'pending' AND local_path IS NOT NULL",
+    );
+  }
+
+
+  /// Get a setting value from CompanySettings table.
+  /// Use company_id=0 for global (cross-company) settings like API keys.
+  static Future<String?> getSetting(int companyId, String key) async {
+    final db = await _instance.database;
+    final rows = await db.query(
+      'CompanySettings',
+      where: 'company_id = ? AND key = ?',
+      whereArgs: [companyId, key],
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['value'] as String?;
+  }
+
+  /// Set a setting value (insert or update).
+  static Future<int> setSetting(int companyId, String key, String value) async {
+    final db = await _instance.database;
+    return await db.insert(
+      'CompanySettings',
+      {'company_id': companyId, 'key': key, 'value': value},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
 }

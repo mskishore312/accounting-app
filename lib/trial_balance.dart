@@ -51,6 +51,8 @@ class _TrialBalanceState extends State<TrialBalance> {
       });
 
       final ledgers = await StorageService.getLedgers();
+      print('🔍 TRIAL BALANCE: ledgers=${ledgers.length}');
+      for (var l in ledgers) print('  ledger: ${l['name']} cls=${l['classification']} id=${l['id']}');
       List<Map<String, dynamic>> data = [];
       double debitTotal = 0;
       double creditTotal = 0;
@@ -147,6 +149,9 @@ class _TrialBalanceState extends State<TrialBalance> {
           });
         } else {
           // Regular ledger balance calculation
+          final report = await StorageService.getLedgerReport(ledger['id'] as int);
+          print('🔍 ${ledger['name']}: report has ${report.length} entries');
+          for (var r in report) print('    entry: date=${r['voucher_date']} debit=${r['debit']} credit=${r['credit']}');
           balance = await FinancialStatementService.calculateLedgerBalance(
             ledgerId: ledger['id'] as int,
             ledger: ledger,
@@ -155,6 +160,7 @@ class _TrialBalanceState extends State<TrialBalance> {
             booksBeginningDate: booksBeginningDate,
           );
 
+          print('🔍 ${ledger['name']} balance=$balance startDate=$startDate endDate=$endDate');
           if (balance == 0) continue;
 
           double debit = 0;

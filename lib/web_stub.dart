@@ -1,8 +1,10 @@
-// This is a stub file for web platforms
-// It provides empty implementations of sqflite_ffi functions
+import 'package:sqflite/sqflite.dart' show databaseFactory;
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
-// Empty implementation of sqfliteFfiInit
+// Stubs so main.dart's desktop FFI calls compile on web (dead code, never reached)
 void sqfliteFfiInit() {}
+final databaseFactoryFfi = databaseFactoryFfiWeb; // harmless alias
 
-// Empty implementation of databaseFactoryFfi
-final databaseFactoryFfi = null;
+Future<void> initDatabase() async {
+  databaseFactory = databaseFactoryFfiWeb;
+}
