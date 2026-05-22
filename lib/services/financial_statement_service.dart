@@ -97,13 +97,10 @@ class FinancialStatementService {
           '${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}';
     }
 
-    // Determine if we should use user-provided opening balance
-    bool useUserProvidedBalance = false;
-    if (booksBeginningDate != null && startDateStr != null) {
-      if (startDateStr == booksBeginningDate) {
-        useUserProvidedBalance = true;
-      }
-    }
+    // Opening balance is the starting state for any report. Always include it
+    // when the ledger has one - it represents the ledger's value as of the
+    // books beginning date (or first day of the financial year).
+    bool useUserProvidedBalance = userOpeningBalance != 0;
 
     double balance = 0.0;
 

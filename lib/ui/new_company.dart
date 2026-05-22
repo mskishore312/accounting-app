@@ -84,8 +84,8 @@ class _NewCompanyState extends State<NewCompany> {
         'contact': _contactController.text,
         'tin': _tinController.text,
         'security': _useSecurity ? 1 : 0,
-        'financial_year_from': _financialYearFrom.toIso8601String(),
-        'books_from': _booksFrom.toIso8601String(),
+        'financial_year_from': _financialYearFrom.toIso8601String().split('T')[0],
+        'books_from': _booksFrom.toIso8601String().split('T')[0],
       };
 
       final companyId = await StorageService.saveCompany(company);

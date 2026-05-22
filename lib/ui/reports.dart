@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/daybook.dart';
 import 'package:accounting_app/ui/ledger_list.dart';
-import 'package:accounting_app/final_reports.dart';
+import 'package:accounting_app/ui/final_reports.dart';
 import 'package:accounting_app/trial_balance.dart';
 import 'package:accounting_app/services/period_service.dart'; // Added
 import 'package:accounting_app/ui/widgets/date_range_selector.dart'; // Added
@@ -36,24 +36,25 @@ class _ReportsState extends State<Reports> { // Added State class
       DateTime? parsedDate;
       if (booksFromStr != null && booksFromStr.isNotEmpty) {
         try {
-          final parts = booksFromStr.split('/');
-          if (parts.length == 3) {
-            final day = int.tryParse(parts[0]);
-            final month = int.tryParse(parts[1]);
-            final year = int.tryParse(parts[2]);
-            if (day != null && month != null && year != null) {
-              // Basic validation for date components
-              if (year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= DateTime(year, month + 1, 0).day) {
-                parsedDate = DateTime(year, month, day);
-              } else {
-                print("Invalid date components in books_from: $booksFromStr");
+          // Try multiple formats: ISO (YYYY-MM-DD or full), or DD/MM/YYYY
+          if (booksFromStr.contains('T') || booksFromStr.contains('-')) {
+            // ISO format
+            parsedDate = DateTime.parse(booksFromStr).toLocal();
+          } else if (booksFromStr.contains('/')) {
+            final parts = booksFromStr.split('/');
+            if (parts.length == 3) {
+              final day = int.tryParse(parts[0]);
+              final month = int.tryParse(parts[1]);
+              final year = int.tryParse(parts[2]);
+              if (day != null && month != null && year != null) {
+                if (year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= DateTime(year, month + 1, 0).day) {
+                  parsedDate = DateTime(year, month, day);
+                }
               }
             }
-          } else {
-            print("Invalid date format (DD/MM/YYYY expected) for books_from: $booksFromStr");
           }
         } catch (e) {
-          print("Error parsing books_from date in Reports: $booksFromStr. Error: $e");
+          print("Error parsing books_from date: $booksFromStr. Error: $e");
         }
       }
 
