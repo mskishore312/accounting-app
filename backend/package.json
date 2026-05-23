@@ -1,0 +1,12 @@
+{
+  "name": "tompa-ai-backend",
+  "version": "1.0.0",
+  "description": "TOM-PA AI backend — Cloudflare Worker proxy for Gemini",
+  "scripts": {
+    "dev":    "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

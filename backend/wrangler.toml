@@ -1,0 +1,7 @@
+name       = "tompa-ai"
+main       = "worker.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+# Non-secret config. Secrets are set via: wrangler secret put GEMINI_API_KEY
+# and: wrangler secret put APP_SECRET
