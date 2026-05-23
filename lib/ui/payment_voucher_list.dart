@@ -402,8 +402,10 @@ class _PaymentVoucherListState extends State<PaymentVoucherList> {
                               color: selected
                                   ? const Color(0x332C5545) // light selection overlay
                                   : const Color(0xFFE0F2E9),
-                              child: Row(
-                                children: [
+                              child: IntrinsicHeight(
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
                                   if (_selectionMode)
                                     Container(
                                       width: 48,
@@ -439,6 +441,7 @@ class _PaymentVoucherListState extends State<PaymentVoucherList> {
                                               color: borderColor, width: 1),
                                         ),
                                       ),
+                                      alignment: Alignment.centerLeft,
                                       child: Text(
                                         formattedDate,
                                         style: const TextStyle(
@@ -462,6 +465,7 @@ class _PaymentVoucherListState extends State<PaymentVoucherList> {
                                               color: borderColor, width: 1),
                                         ),
                                       ),
+                                      alignment: Alignment.centerLeft,
                                       child: Text(
                                         particulars,
                                         style: const TextStyle(
@@ -484,6 +488,7 @@ class _PaymentVoucherListState extends State<PaymentVoucherList> {
                                               color: borderColor, width: 1),
                                         ),
                                       ),
+                                      alignment: Alignment.centerRight,
                                       child: Text(
                                         total.toStringAsFixed(2),
                                         style: const TextStyle(

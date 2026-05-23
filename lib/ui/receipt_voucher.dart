@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/ledger_creation.dart';
+import 'package:accounting_app/ui/widgets/voucher_image_picker.dart';
 
 class ReceiptVoucher extends StatefulWidget {
   final int? voucherId;
@@ -14,6 +15,7 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
   final _formKey = GlobalKey<FormState>();
   final _voucherNoController = TextEditingController();
   final _narrationController = TextEditingController();
+  final List<String> _pendingImages = []; // images picked before first save
   
   DateTime _selectedDate = DateTime.now();
   List<Map<String, dynamic>> _ledgers = [];
@@ -480,6 +482,20 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
         final message = widget.voucherId != null 
             ? 'Receipt voucher updated successfully'
             : 'Receipt voucher saved successfully';
+
+        // Persist any pending images (only relevant for new vouchers)
+        if (_pendingImages.isNotEmpty) {
+          // voucherId is now saved; get it from DB (last inserted)
+          final company = await StorageService.getSelectedCompany();
+          if (company != null) {
+            final vouchers = await StorageService.getVouchers(company['id'], 'Receipt');
+            if (vouchers.isNotEmpty) {
+              final savedId = vouchers.last['id'] as int;
+              await VoucherImagePicker.saveAllPending(savedId, _pendingImages);
+            }
+          }
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
@@ -1113,6 +1129,14 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                       ),
                     ),
                     
+                    const SizedBox(height: 32),
+
+                    // Attachments
+                    VoucherImagePicker(
+                      voucherId: widget.voucherId,
+                      pendingImages: _pendingImages,
+                    ),
+
                     const SizedBox(height: 32),
                     
                     // Save Button

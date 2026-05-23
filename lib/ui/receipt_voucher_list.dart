@@ -355,12 +355,14 @@ class _ReceiptVoucherListState extends State<ReceiptVoucherList> {
                               decoration: BoxDecoration(
                                 // Highlight selected items
                                 color: isSelected ? Colors.blue.withOpacity(0.3) : const Color(0xFFE0F2E9),
-                                border: Border(
-                                  bottom: BorderSide(color: const Color(0xFF2C5545), width: 0.5), // Thinner border
+                                border: const Border(
+                                  bottom: BorderSide(color: Color(0xFF2C5545), width: 0.5),
                                 ),
                               ),
-                              child: Row(
-                                children: [
+                              child: IntrinsicHeight(
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
                                   // Date column
                                   Expanded(
                                     flex: 2,
@@ -371,6 +373,7 @@ class _ReceiptVoucherListState extends State<ReceiptVoucherList> {
                                           right: BorderSide(color: Color(0xFF2C5545), width: 1),
                                         ),
                                       ),
+                                      alignment: Alignment.centerLeft,
                                       child: Text(
                                         formattedDate,
                                         style: const TextStyle(
@@ -390,6 +393,7 @@ class _ReceiptVoucherListState extends State<ReceiptVoucherList> {
                                           right: BorderSide(color: Color(0xFF2C5545), width: 1),
                                         ),
                                       ),
+                                      alignment: Alignment.centerLeft,
                                       child: Text(
                                         particulars,
                                         style: const TextStyle(
@@ -405,6 +409,7 @@ class _ReceiptVoucherListState extends State<ReceiptVoucherList> {
                                     flex: 2,
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                                      alignment: Alignment.centerRight,
                                       child: Text(
                                         total.toStringAsFixed(2),
                                         style: const TextStyle(
@@ -418,6 +423,7 @@ class _ReceiptVoucherListState extends State<ReceiptVoucherList> {
                                 ],
                               ),
                             ),
+                          ),
                           );
                         },
                       ),

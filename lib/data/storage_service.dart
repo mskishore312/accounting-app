@@ -23,7 +23,7 @@ class StorageService {
     String path = join(dbPath, 'accounting_app.db');
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -136,7 +136,18 @@ class StorageService {
     await db.execute('CREATE INDEX idx_company_name ON Companies(name)');
     await db.execute('CREATE INDEX idx_voucher_date ON Vouchers(voucher_date)');
     await db.execute('CREATE INDEX idx_company_settings ON CompanySettings(company_id, key)');
-    await db.execute('CREATE INDEX idx_stock_valuations_date ON StockValuations(ledger_id, valuation_date)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_stock_valuations_date ON StockValuations(ledger_id, valuation_date)');
+
+    await db.execute('''
+      CREATE TABLE VoucherImages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voucher_id INTEGER NOT NULL,
+        image_path TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (voucher_id) REFERENCES Vouchers(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('CREATE INDEX idx_voucher_images ON VoucherImages(voucher_id)');
   }
 
   // Database schema upgrades
@@ -206,9 +217,49 @@ class StorageService {
         }
       }
     }
+    if (oldVersion < 7) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS VoucherImages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          voucher_id INTEGER NOT NULL,
+          image_path TEXT NOT NULL,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (voucher_id) REFERENCES Vouchers(id) ON DELETE CASCADE
+        )
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_voucher_images ON VoucherImages(voucher_id)');
+    }
   }
 
-  // Company operations
+  // VoucherImages operations
+  static Future<void> saveVoucherImage(int voucherId, String imagePath) async {
+    final db = await _instance.database;
+    await db.insert('VoucherImages', {
+      'voucher_id': voucherId,
+      'image_path': imagePath,
+    });
+  }
+
+  static Future<List<String>> getVoucherImages(int voucherId) async {
+    final db = await _instance.database;
+    final rows = await db.query(
+      'VoucherImages',
+      columns: ['image_path'],
+      where: 'voucher_id = ?',
+      whereArgs: [voucherId],
+      orderBy: 'created_at ASC',
+    );
+    return rows.map((r) => r['image_path'] as String).toList();
+  }
+
+  static Future<void> deleteVoucherImage(int voucherId, String imagePath) async {
+    final db = await _instance.database;
+    await db.delete(
+      'VoucherImages',
+      where: 'voucher_id = ? AND image_path = ?',
+      whereArgs: [voucherId, imagePath],
+    );
+  }
   static Future<int> saveCompany(Map<String, dynamic> company) async {
     final db = await _instance.database;
     if (company.containsKey('id')) {

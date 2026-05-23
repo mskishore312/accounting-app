@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/ledger_creation.dart';
+import 'package:accounting_app/ui/widgets/voucher_image_picker.dart';
 
 class PaymentVoucher extends StatefulWidget {
   final int? voucherId;
@@ -14,6 +15,7 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
   final _formKey = GlobalKey<FormState>();
   final _voucherNoController = TextEditingController();
   final _narrationController = TextEditingController();
+  final List<String> _pendingImages = [];
 
   DateTime _selectedDate = DateTime.now();
   List<Map<String, dynamic>> _ledgers = [];
@@ -476,6 +478,19 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
         final message = widget.voucherId != null
             ? 'Payment voucher updated successfully'
             : 'Payment voucher saved successfully';
+
+        // Persist pending images for new vouchers
+        if (_pendingImages.isNotEmpty) {
+          final company = await StorageService.getSelectedCompany();
+          if (company != null) {
+            final vouchers = await StorageService.getVouchers(company['id'], 'Payment');
+            if (vouchers.isNotEmpty) {
+              final savedId = vouchers.last['id'] as int;
+              await VoucherImagePicker.saveAllPending(savedId, _pendingImages);
+            }
+          }
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
@@ -1097,6 +1112,14 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                           fontSize: 14,
                         ),
                       ),
+                    ),
+
+                    const SizedBox(height: 32),
+
+                    // Attachments
+                    VoucherImagePicker(
+                      voucherId: widget.voucherId,
+                      pendingImages: _pendingImages,
                     ),
 
                     const SizedBox(height: 32),
