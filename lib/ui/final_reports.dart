@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/ui/balance_sheet.dart';
 import 'package:accounting_app/ui/profit_and_loss.dart';
+import 'package:accounting_app/ui/trading_and_pl.dart';
 
 class FinalReports extends StatelessWidget {
   final String companyName;
@@ -14,6 +15,10 @@ class FinalReports extends StatelessWidget {
       appBar: AppBar(
         elevation: 0,
         backgroundColor: const Color(0xFF2C5545),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
         title: Text(
           companyName,
           style: const TextStyle(
@@ -22,69 +27,89 @@ class FinalReports extends StatelessWidget {
             color: Colors.white,
           ),
         ),
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(40),
-          child: Padding(
-            padding: EdgeInsets.all(8.0),
-            child: Text(
+        centerTitle: true,
+      ),
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            color: const Color(0xFF2C5545),
+            child: const Text(
               'Final Reports',
-              style: TextStyle(color: Colors.white, fontSize: 18),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
-        ),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            _buildReportButton(
-              context,
-              'Profit & Loss',
-              () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ProfitAndLoss(),
-                ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildButton(
+                    'Profit & Loss',
+                    () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ProfitAndLoss(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildButton(
+                    'Trading & P&L (Detailed)',
+                    () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const TradingAndPL(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildButton(
+                    'Balance Sheet',
+                    () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const BalanceSheet(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            _buildReportButton(
-              context,
-              'Balance Sheet',
-              () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const BalanceSheet(),
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildReportButton(
-    BuildContext context,
-    String title,
-    VoidCallback onPressed,
-  ) {
+  Widget _buildButton(String text, VoidCallback onPressed) {
     return Container(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 15),
-          backgroundColor: const Color(0xFF4C7380),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-        ),
-        child: Text(
-          title,
-          style: const TextStyle(
-            fontSize: 16,
-            color: Colors.white,
+      height: 56,
+      decoration: BoxDecoration(
+        color: const Color(0xFF4C7380),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onPressed,
+          child: Center(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w500,
+                color: Colors.white,
+              ),
+            ),
           ),
         ),
       ),

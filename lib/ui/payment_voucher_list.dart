@@ -502,6 +502,7 @@ class _PaymentVoucherListState extends State<PaymentVoucherList> {
                                 ],
                               ),
                             ),
+                          ),
                           );
                         },
                       ),
