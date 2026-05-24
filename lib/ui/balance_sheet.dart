@@ -13,139 +13,120 @@ class BalanceSheet extends StatefulWidget {
 }
 
 class _BalanceSheetState extends State<BalanceSheet> {
+  static const Color _kDarkGreen = Color(0xFF2C5545);
+  static const Color _kMidGreen = Color(0xFF4C7380);
+  static const Color _kMint = Color(0xFFE0F2E9);
+
   bool isLoading = true;
   DateTime? startDate;
   DateTime? endDate;
   String? booksBeginningDate;
+  String _companyName = '';
 
-  // Assets data
   Map<String, List<Map<String, dynamic>>> assetsData = {};
-  double totalAssets = 0;
-
-  // Liabilities data
   Map<String, List<Map<String, dynamic>>> liabilitiesData = {};
+  double totalAssets = 0;
   double totalLiabilities = 0;
-
-  // Net Profit/Loss
   double netProfit = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadBooksBeginningDate();
+    _initialise();
   }
 
-  Future<void> _loadBooksBeginningDate() async {
+  Future<void> _initialise() async {
     try {
       final company = await StorageService.getSelectedCompany();
       if (company != null) {
         booksBeginningDate = company['books_from'] as String?;
+        _companyName = (company['name'] as String?) ?? '';
       }
-      _loadData();
     } catch (e) {
-      debugPrint('Error loading books beginning date: $e');
-      _loadData();
+      debugPrint('Error loading company: $e');
     }
+    await _loadData();
   }
 
   Future<void> _loadData() async {
+    setState(() => isLoading = true);
     try {
-      setState(() {
-        isLoading = true;
-      });
-
-      // Get period from PeriodService if not set locally
       if (startDate == null || endDate == null) {
         final periodService = Provider.of<PeriodService>(context, listen: false);
         startDate = periodService.startDate;
         endDate = periodService.endDate;
       }
 
-      // Calculate Net Profit first
-      final tradingData = await FinancialStatementService.calculateTradingAccount(
+      final trading = await FinancialStatementService.calculateTradingAccount(
         startDate: startDate,
         endDate: endDate,
         booksBeginningDate: booksBeginningDate,
       );
-      final plData = await FinancialStatementService.calculateProfitAndLoss(
+      final pl = await FinancialStatementService.calculateProfitAndLoss(
         startDate: startDate,
         endDate: endDate,
         booksBeginningDate: booksBeginningDate,
-        grossProfit: tradingData['grossProfit'] as double,
+        grossProfit: trading['grossProfit'] as double,
       );
-      final calculatedNetProfit = plData['netProfit'] as double;
 
-      // Get Assets
       final assets = await FinancialStatementService.getAssets(
         startDate: startDate,
         endDate: endDate,
         booksBeginningDate: booksBeginningDate,
       );
-
-      // Get Liabilities
       final liabilities = await FinancialStatementService.getLiabilities(
         startDate: startDate,
         endDate: endDate,
         booksBeginningDate: booksBeginningDate,
       );
 
-      // Calculate totals
-      double assetsTotal = 0;
-      for (var category in assets.values) {
-        for (var item in category) {
-          assetsTotal += item['balance'] as double;
+      double aTotal = 0;
+      for (final category in assets.values) {
+        for (final it in category) {
+          aTotal += (it['balance'] as num).toDouble();
+        }
+      }
+      double lTotal = 0;
+      for (final category in liabilities.values) {
+        for (final it in category) {
+          lTotal += (it['balance'] as num).toDouble();
         }
       }
 
-      double liabilitiesTotal = 0;
-      for (var category in liabilities.values) {
-        for (var item in category) {
-          liabilitiesTotal += item['balance'] as double;
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          assetsData = assets;
-          liabilitiesData = liabilities;
-          totalAssets = assetsTotal;
-          totalLiabilities = liabilitiesTotal;
-          netProfit = calculatedNetProfit;
-          isLoading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        assetsData = assets;
+        liabilitiesData = liabilities;
+        totalAssets = aTotal;
+        totalLiabilities = lTotal;
+        netProfit = pl['netProfit'] as double;
+        isLoading = false;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading data: $e')),
-        );
-      }
+      if (!mounted) return;
+      setState(() => isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading data: $e')),
+      );
     }
   }
 
-  void _onDateRangeSelected(DateTime start, DateTime end) {
-    setState(() {
-      startDate = start;
-      endDate = end;
-    });
-    _loadData();
-  }
-
-  void _showDateRangeDialog() {
+  void _showDatePicker() {
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
         return Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           child: DateRangeSelector(
             initialStartDate: startDate,
             initialEndDate: endDate,
             showResetButton: true,
             onDateRangeSelected: (start, end) {
-              _onDateRangeSelected(start, end);
+              setState(() {
+                startDate = start;
+                endDate = end;
+              });
+              _loadData();
               Navigator.of(dialogContext).pop();
             },
             onCancel: () => Navigator.of(dialogContext).pop(),
@@ -158,12 +139,6 @@ class _BalanceSheetState extends State<BalanceSheet> {
               });
               _loadData();
               Navigator.of(dialogContext).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Period reset to session default'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
             },
           ),
         );
@@ -171,439 +146,319 @@ class _BalanceSheetState extends State<BalanceSheet> {
     );
   }
 
-  String _formatDate(DateTime? date) {
-    if (date == null) return '';
-    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+  String _formatDate(DateTime? d) {
+    if (d == null) return '';
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
   }
 
-  Widget _buildSectionHeader(String title, {required Color color}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
+  String _money(double v) => v.abs().toStringAsFixed(2);
+
+  // ----- T-format building blocks (same style as P&L) -----
+
+  Widget _sectionHeader(String title) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        color: _kDarkGreen,
+        child: Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.8,
+          ),
         ),
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
+      );
 
-  Widget _buildCategoryHeader(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 12, bottom: 6, left: 8),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.bold,
-          color: Color(0xFF2C5545),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAccountItem(String name, double amount, {bool isIndented = false}) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: isIndented ? 24 : 16,
-        vertical: 4,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget _columnsHeader(String left, String right, double width) => Row(
         children: [
-          Expanded(
-            child: Text(
-              name,
+          _columnHeaderCell(left, width),
+          Container(width: 1, color: _kDarkGreen),
+          _columnHeaderCell(right, width),
+        ],
+      );
+
+  Widget _columnHeaderCell(String text, double width) => Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        color: _kMidGreen,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            const Text(
+              'Amount',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _groupLabel(String text, double width) => Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+        decoration: BoxDecoration(color: _kMint.withOpacity(0.5)),
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 12,
+            color: _kDarkGreen,
+            fontWeight: FontWeight.bold,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
+
+  Widget _row(String name, double amount, double width) => Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                name,
+                style: const TextStyle(fontSize: 13, color: _kDarkGreen),
+              ),
+            ),
+            Text(
+              _money(amount),
               style: const TextStyle(
-                fontSize: 14,
-                color: Color(0xFF2C5545),
+                fontSize: 13,
+                color: _kDarkGreen,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
-          ),
-          Text(
-            amount.toStringAsFixed(2),
-            style: const TextStyle(
-              fontSize: 14,
-              color: Color(0xFF2C5545),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSubtotalRow(String label, double amount) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF2C5545),
-            ),
-          ),
-          Text(
-            amount.toStringAsFixed(2),
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF2C5545),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTotalRow(String label, double amount, Color backgroundColor) {
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          Text(
-            amount.toStringAsFixed(2),
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAssetsSection() {
-    double fixedAssetsTotal = 0;
-    double investmentsTotal = 0;
-    double currentAssetsTotal = 0;
-    double loansAdvancesTotal = 0;
-    double miscExpensesTotal = 0;
-
-    // Calculate subtotals
-    for (var item in assetsData['Fixed Assets'] ?? []) {
-      fixedAssetsTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Investments'] ?? []) {
-      investmentsTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Current Assets'] ?? []) {
-      currentAssetsTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Loans & Advances'] ?? []) {
-      loansAdvancesTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Misc. Expenses'] ?? []) {
-      miscExpensesTotal += item['balance'] as double;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.shade200, width: 2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Fixed Assets
-          if ((assetsData['Fixed Assets'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Fixed Assets'),
-            ...(assetsData['Fixed Assets'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Fixed Assets'] ?? []).length > 1)
-              _buildSubtotalRow('Total Fixed Assets', fixedAssetsTotal),
           ],
+        ),
+      );
 
-          // Investments
-          if ((assetsData['Investments'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Investments'),
-            ...(assetsData['Investments'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Investments'] ?? []).length > 1)
-              _buildSubtotalRow('Total Investments', investmentsTotal),
-          ],
-
-          // Current Assets
-          if ((assetsData['Current Assets'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Current Assets'),
-            ...(assetsData['Current Assets'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Current Assets'] ?? []).length > 1)
-              _buildSubtotalRow('Total Current Assets', currentAssetsTotal),
-          ],
-
-          // Loans & Advances (Asset)
-          if ((assetsData['Loans & Advances'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Loans & Advances (Asset)'),
-            ...(assetsData['Loans & Advances'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Loans & Advances'] ?? []).length > 1)
-              _buildSubtotalRow('Total Loans & Advances', loansAdvancesTotal),
-          ],
-
-          // Misc. Expenses (Asset)
-          if ((assetsData['Misc. Expenses'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Misc. Expenses (Asset)'),
-            ...(assetsData['Misc. Expenses'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Misc. Expenses'] ?? []).length > 1)
-              _buildSubtotalRow('Total Misc. Expenses', miscExpensesTotal),
-          ],
-
-          if (totalAssets == 0)
-            const Padding(
-              padding: EdgeInsets.all(16),
+  Widget _totalRow(String label, double amount, double width) => Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+        decoration: const BoxDecoration(
+          color: _kMint,
+          border: Border(top: BorderSide(color: _kDarkGreen, width: 1)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
               child: Text(
-                'No assets for this period',
-                style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                label,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: _kDarkGreen,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLiabilitiesSection() {
-    double capitalReservesTotal = 0;
-    double loansTotal = 0;
-    double bankODTotal = 0;
-    double currentLiabilitiesTotal = 0;
-
-    // Calculate subtotals
-    for (var item in liabilitiesData['Capital & Reserves'] ?? []) {
-      capitalReservesTotal += item['balance'] as double;
-    }
-    for (var item in liabilitiesData['Loans'] ?? []) {
-      loansTotal += item['balance'] as double;
-    }
-    for (var item in liabilitiesData['Bank Overdraft'] ?? []) {
-      bankODTotal += item['balance'] as double;
-    }
-    for (var item in liabilitiesData['Current Liabilities'] ?? []) {
-      currentLiabilitiesTotal += item['balance'] as double;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange.shade200, width: 2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Capital & Reserves
-          if ((liabilitiesData['Capital & Reserves'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Capital & Reserves'),
-            ...(liabilitiesData['Capital & Reserves'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Capital & Reserves'] ?? []).length > 1)
-              _buildSubtotalRow('Total Capital & Reserves', capitalReservesTotal),
-          ],
-
-          // Loans (Liability)
-          if ((liabilitiesData['Loans'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Loans'),
-            ...(liabilitiesData['Loans'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Loans'] ?? []).length > 1)
-              _buildSubtotalRow('Total Loans', loansTotal),
-          ],
-
-          // Bank Overdraft
-          if ((liabilitiesData['Bank Overdraft'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Bank Overdraft'),
-            ...(liabilitiesData['Bank Overdraft'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Bank Overdraft'] ?? []).length > 1)
-              _buildSubtotalRow('Total Bank Overdraft', bankODTotal),
-          ],
-
-          // Current Liabilities
-          if ((liabilitiesData['Current Liabilities'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Current Liabilities'),
-            ...(liabilitiesData['Current Liabilities'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Current Liabilities'] ?? []).length > 1)
-              _buildSubtotalRow('Total Current Liabilities', currentLiabilitiesTotal),
-          ],
-
-          if (totalLiabilities == 0 && netProfit == 0)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'No liabilities for this period',
-                style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+            Text(
+              _money(amount),
+              style: const TextStyle(
+                fontSize: 13,
+                color: _kDarkGreen,
+                fontWeight: FontWeight.bold,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
+
+  /// Build a flat list of widgets for one side, grouped by category.
+  List<Widget> _buildSide(
+    Map<String, List<Map<String, dynamic>>> data,
+    double width, {
+    Map<String, double>? extraItems, // e.g. Net Profit into Liabilities side
+  }) {
+    final widgets = <Widget>[];
+    extraItems?.forEach((label, amount) {
+      widgets.add(_groupLabel(' ', width));
+      widgets.add(_row(label, amount, width));
+    });
+    data.forEach((category, items) {
+      if (items.isEmpty) return;
+      widgets.add(_groupLabel(category, width));
+      for (final it in items) {
+        widgets.add(_row(
+          (it['name'] as String?) ?? '',
+          (it['balance'] as num?)?.toDouble() ?? 0.0,
+          width,
+        ));
+      }
+    });
+    if (widgets.isEmpty) {
+      widgets.add(_row('(no entries)', 0, width));
+    }
+    return widgets;
   }
 
   @override
   Widget build(BuildContext context) {
-    final totalLiabilitiesWithProfit = totalLiabilities + (netProfit >= 0 ? netProfit : 0);
-    final difference = (totalAssets - totalLiabilitiesWithProfit).abs();
-    final isBalanced = difference < 0.01;
+    const double colWidth = 280;
+
+    // Net Profit goes on Liabilities side; Net Loss on Assets side
+    final liabExtras = <String, double>{};
+    final assetExtras = <String, double>{};
+    if (netProfit >= 0) {
+      liabExtras['Net Profit for the period'] = netProfit;
+    } else {
+      assetExtras['Net Loss for the period'] = netProfit.abs();
+    }
+
+    final liabRows = _buildSide(liabilitiesData, colWidth, extraItems: liabExtras);
+    final assetRows = _buildSide(assetsData, colWidth, extraItems: assetExtras);
+
+    // Pad shorter side
+    final maxLen = liabRows.length > assetRows.length ? liabRows.length : assetRows.length;
+    while (liabRows.length < maxLen) {
+      liabRows.add(Container(
+        width: colWidth,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+      ));
+    }
+    while (assetRows.length < maxLen) {
+      assetRows.add(Container(
+        width: colWidth,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+      ));
+    }
+
+    final pairedRows = <Widget>[];
+    for (int i = 0; i < maxLen; i++) {
+      pairedRows.add(IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            liabRows[i],
+            Container(width: 1, color: _kDarkGreen),
+            assetRows[i],
+          ],
+        ),
+      ));
+    }
+
+    final totalLiabAndProfit = totalLiabilities + (netProfit >= 0 ? netProfit : 0);
+    final totalAssetsAndLoss = totalAssets + (netProfit < 0 ? netProfit.abs() : 0);
+    final maxTotal = totalLiabAndProfit > totalAssetsAndLoss ? totalLiabAndProfit : totalAssetsAndLoss;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFE0F2E9),
+      backgroundColor: _kMint,
       appBar: AppBar(
         elevation: 0,
-        title: const Text(
-          'Balance Sheet',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
+        backgroundColor: _kDarkGreen,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          _companyName.isEmpty ? 'Balance Sheet' : _companyName,
+          style: const TextStyle(
             color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
           ),
         ),
-        backgroundColor: const Color(0xFF2C5545),
+        centerTitle: true,
         actions: [
           IconButton(
             icon: const Icon(Icons.calendar_today, color: Colors.white),
-            onPressed: _showDateRangeDialog,
-            tooltip: 'Select Date Range',
+            tooltip: 'Select Period',
+            onPressed: _showDatePicker,
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            tooltip: 'Refresh',
+            onPressed: _loadData,
           ),
         ],
       ),
       body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Period display
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF2C5545), width: 2),
-                    ),
-                    child: Column(
-                      children: [
-                        Text(
-                          'As on: ${_formatDate(endDate)}',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF2C5545),
-                          ),
-                          textAlign: TextAlign.center,
+          ? const Center(child: CircularProgressIndicator(color: _kDarkGreen))
+          : Column(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  color: _kMint,
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Balance Sheet',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: _kDarkGreen,
                         ),
-                        if (!isBalanced)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'As at ${_formatDate(endDate)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: _kDarkGreen,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 24),
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
                               decoration: BoxDecoration(
-                                color: Colors.red[100],
-                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: _kDarkGreen, width: 1.5),
                               ),
-                              child: Text(
-                                'Difference: ₹${difference.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red[900],
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _sectionHeader('BALANCE SHEET'),
+                                  _columnsHeader(
+                                    'Liabilities',
+                                    'Assets',
+                                    colWidth,
+                                  ),
+                                  Container(height: 1, color: _kDarkGreen),
+                                  ...pairedRows,
+                                  IntrinsicHeight(
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      children: [
+                                        _totalRow('Total', maxTotal, colWidth),
+                                        Container(width: 1, color: _kDarkGreen),
+                                        _totalRow('Total', maxTotal, colWidth),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // ASSETS SECTION
-                  _buildSectionHeader('ASSETS', color: Colors.blue.shade700),
-                  const SizedBox(height: 12),
-                  _buildAssetsSection(),
-                  _buildTotalRow('Total Assets', totalAssets, Colors.blue.shade700),
-                  const SizedBox(height: 30),
-
-                  // LIABILITIES SECTION
-                  _buildSectionHeader('LIABILITIES & CAPITAL', color: Colors.orange.shade700),
-                  const SizedBox(height: 12),
-                  _buildLiabilitiesSection(),
-                  _buildTotalRow('Total Liabilities', totalLiabilities, Colors.orange.shade700),
-                  const SizedBox(height: 12),
-
-                  // Net Profit/Loss
-                  if (netProfit != 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: netProfit >= 0 ? Colors.green.shade100 : Colors.red.shade100,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: netProfit >= 0 ? Colors.green.shade700 : Colors.red.shade700,
-                          width: 2,
+                          ],
                         ),
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            netProfit >= 0 ? 'Add: Net Profit' : 'Less: Net Loss',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: netProfit >= 0 ? Colors.green.shade900 : Colors.red.shade900,
-                            ),
-                          ),
-                          Text(
-                            netProfit.abs().toStringAsFixed(2),
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: netProfit >= 0 ? Colors.green.shade900 : Colors.red.shade900,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                  const SizedBox(height: 12),
-                  _buildTotalRow(
-                    'Total Liabilities + Capital',
-                    totalLiabilitiesWithProfit,
-                    Colors.orange.shade700,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
     );
   }
