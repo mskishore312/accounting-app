@@ -29,16 +29,14 @@ class _ProfitAndLossState extends State<ProfitAndLoss> {
   Future<void> _loadProfitAndLoss() async {
     try {
       final company = await StorageService.getSelectedCompany();
-      final booksBeginningDate = company?['books_from'] as String?;
-
-      DateTime? startDate;
-      if (booksBeginningDate != null) {
-        final p = booksBeginningDate.split('-');
-        if (p.length == 3) {
-          startDate = DateTime(
-              int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
-        }
-      }
+      final rawBooks = company?['books_from'] as String?;
+      // books_from may be ISO8601 (e.g. 2024-04-01T00:00:00.000); parse robustly.
+      final parsed = rawBooks != null ? DateTime.tryParse(rawBooks) : null;
+      final startDate = parsed != null
+          ? DateTime(parsed.year, parsed.month, parsed.day)
+          : DateTime(2000, 1, 1);
+      final booksBeginningDate =
+          '${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}';
       final endDate = DateTime.now();
 
       final trading = await FinancialStatementService.calculateTradingAccount(

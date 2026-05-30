@@ -28,18 +28,16 @@ class _BalanceSheetState extends State<BalanceSheet> {
   Future<void> _loadBalanceSheet() async {
     try {
       final company = await StorageService.getSelectedCompany();
-      final booksBeginningDate = company?['books_from'] as String?;
-
-      // Use the full financial year: from books-beginning (so opening balances
-      // are picked up) through today.
-      DateTime? startDate;
-      if (booksBeginningDate != null) {
-        final p = booksBeginningDate.split('-');
-        if (p.length == 3) {
-          startDate = DateTime(
-              int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
-        }
-      }
+      final rawBooks = company?['books_from'] as String?;
+      // books_from may be ISO8601 (e.g. 2024-04-01T00:00:00.000); parse robustly.
+      final parsed = rawBooks != null ? DateTime.tryParse(rawBooks) : null;
+      final startDate = parsed != null
+          ? DateTime(parsed.year, parsed.month, parsed.day)
+          : DateTime(2000, 1, 1);
+      // Build the gate string the exact same way the service formats startDate,
+      // so opening balances (held on the ledger) are always picked up.
+      final booksBeginningDate =
+          '${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}';
       final endDate = DateTime.now();
 
       final assets = await FinancialStatementService.getAssets(
