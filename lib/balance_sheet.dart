@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/services/financial_statement_service.dart';
 
 class BalanceSheet extends StatefulWidget {
   const BalanceSheet({Key? key}) : super(key: key);
@@ -16,6 +17,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
   };
   double totalAssets = 0;
   double totalLiabilities = 0;
+  DateTime _asOf = DateTime.now();
 
   @override
   void initState() {
@@ -25,42 +27,100 @@ class _BalanceSheetState extends State<BalanceSheet> {
 
   Future<void> _loadBalanceSheet() async {
     try {
-      final ledgers = await StorageService.getLedgers();
+      final company = await StorageService.getSelectedCompany();
+      final booksBeginningDate = company?['books_from'] as String?;
+
+      // Use the full financial year: from books-beginning (so opening balances
+      // are picked up) through today.
+      DateTime? startDate;
+      if (booksBeginningDate != null) {
+        final p = booksBeginningDate.split('-');
+        if (p.length == 3) {
+          startDate = DateTime(
+              int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
+        }
+      }
+      final endDate = DateTime.now();
+
+      final assets = await FinancialStatementService.getAssets(
+        startDate: startDate,
+        endDate: endDate,
+        booksBeginningDate: booksBeginningDate,
+      );
+      final liabilities = await FinancialStatementService.getLiabilities(
+        startDate: startDate,
+        endDate: endDate,
+        booksBeginningDate: booksBeginningDate,
+      );
+      final trading = await FinancialStatementService.calculateTradingAccount(
+        startDate: startDate,
+        endDate: endDate,
+        booksBeginningDate: booksBeginningDate,
+      );
+      final pl = await FinancialStatementService.calculateProfitAndLoss(
+        startDate: startDate,
+        endDate: endDate,
+        booksBeginningDate: booksBeginningDate,
+        grossProfit: trading['grossProfit'] as double,
+      );
+      final netProfit = pl['netProfit'] as double;
+
+      // Flatten assets
+      final assetRows = <Map<String, dynamic>>[];
       double assetsTotal = 0;
+      assets.forEach((category, items) {
+        for (final it in items) {
+          final amt = (it['balance'] as num).toDouble();
+          assetRows.add({
+            'name': it['name'],
+            'type': it['group'],
+            'amount': amt,
+          });
+          assetsTotal += amt;
+        }
+      });
+
+      // Flatten liabilities
+      final liabRows = <Map<String, dynamic>>[];
       double liabilitiesTotal = 0;
-
-      for (var ledger in ledgers) {
-        final report = await StorageService.getLedgerReport(ledger['id'] as int);
-        double balance = 0;
-
-        for (var entry in report) {
-          balance += (entry['debit'] as double? ?? 0) - (entry['credit'] as double? ?? 0);
+      liabilities.forEach((category, items) {
+        for (final it in items) {
+          final amt = (it['balance'] as num).toDouble();
+          liabRows.add({
+            'name': it['name'],
+            'type': it['group'],
+            'amount': amt,
+          });
+          liabilitiesTotal += amt;
         }
+      });
 
-        if (balance != 0) {
-          final classification = ledger['classification'] as String? ?? '';
-          if (['Fixed Assets', 'Current Assets', 'Investments'].contains(classification)) {
-            balanceSheetData['assets']!.add({
-              'name': ledger['name'],
-              'amount': balance.abs(),
-              'type': classification,
-            });
-            assetsTotal += balance > 0 ? balance : 0;
-          } else if (['Current Liabilities', 'Loans', 'Capital Account'].contains(classification)) {
-            balanceSheetData['liabilities']!.add({
-              'name': ledger['name'],
-              'amount': balance.abs(),
-              'type': classification,
-            });
-            liabilitiesTotal += balance < 0 ? balance.abs() : 0;
-          }
+      // Net Profit increases Capital (Liabilities side); Net Loss sits on Assets.
+      if (netProfit >= 0) {
+        if (netProfit != 0) {
+          liabRows.add({
+            'name': 'Net Profit',
+            'type': 'Capital Account',
+            'amount': netProfit,
+          });
+          liabilitiesTotal += netProfit;
         }
+      } else {
+        assetRows.add({
+          'name': 'Net Loss',
+          'type': 'Profit & Loss A/c',
+          'amount': netProfit.abs(),
+        });
+        assetsTotal += netProfit.abs();
       }
 
       if (mounted) {
         setState(() {
+          balanceSheetData['assets'] = assetRows;
+          balanceSheetData['liabilities'] = liabRows;
           totalAssets = assetsTotal;
           totalLiabilities = liabilitiesTotal;
+          _asOf = endDate;
           isLoading = false;
         });
       }
@@ -95,15 +155,12 @@ class _BalanceSheetState extends State<BalanceSheet> {
           scrollDirection: Axis.horizontal,
           child: DataTable(
             headingRowColor: MaterialStateProperty.all(
-              const Color(0x1A2C5545),  // 10% opacity
+              const Color(0x1A2C5545),
             ),
             columns: const [
               DataColumn(label: Text('Particulars')),
               DataColumn(label: Text('Type')),
-              DataColumn(
-                label: Text('Amount'),
-                numeric: true,
-              ),
+              DataColumn(label: Text('Amount'), numeric: true),
             ],
             rows: [
               ...data.map(
@@ -111,21 +168,15 @@ class _BalanceSheetState extends State<BalanceSheet> {
                   cells: [
                     DataCell(Text(item['name'] as String)),
                     DataCell(Text(item['type'] as String)),
-                    DataCell(Text(
-                      (item['amount'] as double).toStringAsFixed(2),
-                    )),
+                    DataCell(Text((item['amount'] as double).toStringAsFixed(2))),
                   ],
                 ),
               ),
               DataRow(
-                color: MaterialStateProperty.all(
-                  const Color(0x1A2C5545),  // 10% opacity
-                ),
+                color: MaterialStateProperty.all(const Color(0x1A2C5545)),
                 cells: [
-                  const DataCell(Text(
-                    'Total',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  )),
+                  const DataCell(Text('Total',
+                      style: TextStyle(fontWeight: FontWeight.bold))),
                   const DataCell(Text('')),
                   DataCell(Text(
                     total.toStringAsFixed(2),
@@ -142,6 +193,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final asOfStr = _asOf.toString().split(' ')[0];
     return Scaffold(
       appBar: AppBar(
         title: const Text('Balance Sheet'),
@@ -158,15 +210,18 @@ class _BalanceSheetState extends State<BalanceSheet> {
                     Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Text(
-                        'Balance Sheet as of ${DateTime.now().toString().split(' ')[0]}',
+                        'Balance Sheet as of $asOfStr',
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
-                    _buildSection('Assets', balanceSheetData['assets']!, totalAssets),
-                    _buildSection('Liabilities & Capital', balanceSheetData['liabilities']!, totalLiabilities),
+                    // Liabilities & Capital on top
+                    _buildSection('Liabilities & Capital',
+                        balanceSheetData['liabilities']!, totalLiabilities),
+                    _buildSection(
+                        'Assets', balanceSheetData['assets']!, totalAssets),
                   ],
                 ),
               ),
