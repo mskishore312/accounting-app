@@ -22,8 +22,13 @@ import { exportCsv, printReport } from '../export'
 
 export default function DayBook() {
   const navigate = useNavigate()
-  const { company, companyVouchers, companyLedgers, period } =
-    useStore()
+  const {
+    company,
+    companyVouchers,
+    companyLedgers,
+    companyStockItems,
+    period,
+  } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [periodOpen, setPeriodOpen] = useState(false)
@@ -32,10 +37,15 @@ export default function DayBook() {
 
   const nameOf = (id: string) =>
     companyLedgers.find((l) => l.id === id)?.name ?? '?'
+  const itemNameOf = (id: string) =>
+    companyStockItems.find((s) => s.id === id)?.name ?? '?'
 
   const rows = companyVouchers
     .filter((v) => inPeriod(v.date, period))
-    .map((v) => ({ v, ...daybookParticulars(v, nameOf) }))
+    .map((v) => ({
+      v,
+      ...daybookParticulars(v, nameOf, itemNameOf),
+    }))
     .filter((r) =>
       matchesFilter(filter, {
         date: r.v.date,

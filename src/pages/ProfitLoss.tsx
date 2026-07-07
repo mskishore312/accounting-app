@@ -6,37 +6,71 @@ import {
   PopupMenu,
 } from '../components/ui'
 import { useStore } from '../store'
-import { fmt, profitAndLoss } from '../accounting'
+import { fmt, PLRow, profitAndLoss } from '../accounting'
 import { printReport } from '../export'
 
+function Rows({
+  rows,
+  detailed,
+}: {
+  rows: PLRow[]
+  detailed: boolean
+}) {
+  return (
+    <>
+      {rows.map((r) => (
+        <div key={r.name}>
+          <div
+            className="tc-row bold"
+            style={
+              r.emphasis
+                ? { color: '#14453c', fontStyle: 'italic' }
+                : undefined
+            }
+          >
+            <span>{r.name}</span>
+            <span>{fmt(r.amount)}</span>
+          </div>
+          {detailed &&
+            r.children.map((c) => (
+              <div className="tc-row child" key={c.name}>
+                <span style={{ paddingLeft: 12 }}>{c.name}</span>
+                <span>{fmt(c.amount)}</span>
+              </div>
+            ))}
+        </div>
+      ))}
+    </>
+  )
+}
+
+/**
+ * Tally-principle horizontal P&L with Gross Profit:
+ * trading section (Opening Stock, Purchases, Direct Expenses vs
+ * Sales, Direct Incomes, Closing Stock) carries Gross Profit c/o
+ * down to the income statement, which nets Indirect Expenses
+ * against Gross Profit b/f + Indirect Income into Nett Profit.
+ */
 export default function ProfitLoss() {
   const {
     company,
     companyGroups,
     companyLedgers,
+    companyStockItems,
     companyVouchers,
     period,
   } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [periodOpen, setPeriodOpen] = useState(false)
+  const [detailed, setDetailed] = useState(false)
 
   const pl = profitAndLoss(
     companyGroups,
     companyLedgers,
+    companyStockItems,
     companyVouchers,
     period,
-  )
-
-  const gross = pl.netProfit
-  const left = [...pl.left]
-  const right = [...pl.right]
-  // Balance both sides with Nett Profit / Nett Loss
-  if (gross > 0) left.push({ name: 'Nett Profit', amount: gross })
-  else if (gross < 0)
-    right.push({ name: 'Nett Loss', amount: -gross })
-  const total = Math.max(
-    left.reduce((s, r) => s + r.amount, 0),
-    right.reduce((s, r) => s + r.amount, 0),
+    company?.integrateInventory ?? true,
   )
 
   return (
@@ -49,6 +83,10 @@ export default function ProfitLoss() {
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         items={[
+          {
+            label: detailed ? 'Condensed View' : 'Detailed View',
+            onClick: () => setDetailed((d) => !d),
+          },
           { label: 'Export As PDF', onClick: () => printReport() },
           {
             label: 'Change Period',
@@ -58,21 +96,16 @@ export default function ProfitLoss() {
       />
       <div className="subtitle">Profit And Loss</div>
       <PeriodLine />
-      <div className="two-col">
+      <div className="two-col" style={{ flex: 'initial' }}>
         <div className="col">
           <div className="tc-head">
             <span>Particulars</span>
             <span>Amount</span>
           </div>
-          {left.map((r) => (
-            <div className="tc-row bold" key={r.name}>
-              <span>{r.name}</span>
-              <span>{fmt(r.amount)}</span>
-            </div>
-          ))}
+          <Rows rows={pl.tradingLeft} detailed={detailed} />
           <div className="tc-total">
             <span>Total</span>
-            <span>{fmt(total)}</span>
+            <span>{fmt(pl.tradingTotal)}</span>
           </div>
         </div>
         <div className="col">
@@ -80,15 +113,29 @@ export default function ProfitLoss() {
             <span>Particulars</span>
             <span>Amount</span>
           </div>
-          {right.map((r) => (
-            <div className="tc-row bold" key={r.name}>
-              <span>{r.name}</span>
-              <span>{fmt(r.amount)}</span>
-            </div>
-          ))}
+          <Rows rows={pl.tradingRight} detailed={detailed} />
           <div className="tc-total">
             <span>Total</span>
-            <span>{fmt(total)}</span>
+            <span>{fmt(pl.tradingTotal)}</span>
+          </div>
+        </div>
+      </div>
+      <div
+        className="two-col"
+        style={{ borderTop: 'none', flex: 'initial' }}
+      >
+        <div className="col">
+          <Rows rows={pl.lowerLeft} detailed={detailed} />
+          <div className="tc-total">
+            <span>Total</span>
+            <span>{fmt(pl.lowerTotal)}</span>
+          </div>
+        </div>
+        <div className="col">
+          <Rows rows={pl.lowerRight} detailed={detailed} />
+          <div className="tc-total">
+            <span>Total</span>
+            <span>{fmt(pl.lowerTotal)}</span>
           </div>
         </div>
       </div>

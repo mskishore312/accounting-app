@@ -4,8 +4,10 @@ import {
   Group,
   Ledger,
   Period,
+  StockItem,
   Voucher,
 } from './types'
+import { closingStockValue } from './inventory'
 
 export function fmt(n: number): string {
   return n.toLocaleString('en-IN', {
@@ -172,18 +174,29 @@ export function buildLedgerReport(
 export function daybookParticulars(
   v: Voucher,
   nameOf: (id: string) => string,
+  itemNameOf?: (id: string) => string,
 ): { particulars: string; debit: number; credit: number } {
+  if (
+    v.vchType === 'Stock Journal' ||
+    v.vchType === 'Physical Stock'
+  ) {
+    const particulars = (v.invLines ?? [])
+      .map((l) => (itemNameOf ? itemNameOf(l.itemId) : ''))
+      .filter(Boolean)
+      .join(', ')
+    return { particulars, debit: 0, credit: 0 }
+  }
   const drLines = v.lines.filter((l) => l.type === 'Dr')
   const crLines = v.lines.filter((l) => l.type === 'Cr')
   const total = drLines.reduce((s, l) => s + l.amount, 0)
-  if (v.vchType === 'Receipt') {
+  if (v.vchType === 'Receipt' || v.vchType === 'Credit Note') {
     return {
       particulars: crLines.map((l) => nameOf(l.ledgerId)).join(', '),
       debit: 0,
       credit: total,
     }
   }
-  if (v.vchType === 'Payment') {
+  if (v.vchType === 'Payment' || v.vchType === 'Debit Note') {
     return {
       particulars: drLines.map((l) => nameOf(l.ledgerId)).join(', '),
       debit: total,
@@ -231,65 +244,215 @@ export function trialBalance(
   return { rows, totalDebit, totalCredit }
 }
 
-export interface PLResult {
-  left: Array<{ name: string; amount: number }>
-  right: Array<{ name: string; amount: number }>
-  totalLeft: number
-  totalRight: number
-  /** positive = profit */
-  netProfit: number
+export interface PLRow {
+  name: string
+  amount: number
+  children: Array<{ name: string; amount: number }>
+  emphasis?: boolean
 }
 
-function groupTotal(
+export interface PLResult {
+  /** Trading section (determines Gross Profit) */
+  tradingLeft: PLRow[]
+  tradingRight: PLRow[]
+  /** positive = gross profit (carried over) */
+  grossProfit: number
+  tradingTotal: number
+  /** Income statement section */
+  lowerLeft: PLRow[]
+  lowerRight: PLRow[]
+  /** positive = nett profit */
+  netProfit: number
+  lowerTotal: number
+  openingStock: number
+  closingStock: number
+}
+
+function groupRow(
   groups: Group[],
   ledgers: Ledger[],
   vouchers: Voucher[],
   p: Period,
   root: string,
-): number {
+  flip: boolean,
+): PLRow {
   const names = groupsUnder(groups, [root])
+  const children: Array<{ name: string; amount: number }> = []
   let sum = 0
   for (const l of ledgersInGroups(ledgers, names)) {
-    sum += closingAt(vouchers, l, p)
+    const raw = closingAt(vouchers, l, p)
+    const amt = flip ? -raw : raw
+    sum += amt
+    if (amt !== 0) children.push({ name: l.name, amount: amt })
   }
-  return sum
+  return { name: root, amount: sum, children }
+}
+
+export interface StockFigures {
+  openingStock: number
+  closingStock: number
+}
+
+/**
+ * Opening/Closing Stock per Tally's F11 "Integrate Accounts with
+ * Inventory":
+ *  - integrated: valued from stock items (per-item costing method);
+ *  - manual: taken from Stock-in-hand ledgers — opening balances,
+ *    plus dated closing balance entries (latest entry whose
+ *    date <= report date wins; entries strictly before the period
+ *    start feed the opening figure).
+ */
+export function stockFigures(
+  groups: Group[],
+  ledgers: Ledger[],
+  stockItems: StockItem[],
+  vouchers: Voucher[],
+  p: Period,
+  integrate: boolean,
+): StockFigures {
+  if (integrate) {
+    return {
+      openingStock: closingStockValue(
+        stockItems,
+        vouchers,
+        p.from,
+        true,
+      ),
+      closingStock: closingStockValue(stockItems, vouchers, p.to),
+    }
+  }
+  const names = groupsUnder(groups, ['Stock-in-hand'])
+  const stockLedgers = ledgers.filter((l) => names.has(l.under))
+  const valueAsOn = (l: Ledger, date: string, exclusive: boolean) => {
+    const entries = (l.closingBalances ?? [])
+      .filter((e) => (exclusive ? e.date < date : e.date <= date))
+      .sort((a, b) => a.date.localeCompare(b.date))
+    if (entries.length) return entries[entries.length - 1].value
+    return openingSigned(l)
+  }
+  return {
+    openingStock: stockLedgers.reduce(
+      (s, l) => s + valueAsOn(l, p.from, true),
+      0,
+    ),
+    closingStock: stockLedgers.reduce(
+      (s, l) => s + valueAsOn(l, p.to, false),
+      0,
+    ),
+  }
 }
 
 export function profitAndLoss(
   groups: Group[],
   ledgers: Ledger[],
+  stockItems: StockItem[],
   vouchers: Voucher[],
   p: Period,
+  integrate: boolean,
 ): PLResult {
-  const purchase = groupTotal(groups, ledgers, vouchers, p, 'Purchase Accounts')
-  const directExp = groupTotal(groups, ledgers, vouchers, p, 'Direct Expenses')
-  const indirectExp = groupTotal(groups, ledgers, vouchers, p, 'Indirect Expenses')
-  const sales = -groupTotal(groups, ledgers, vouchers, p, 'Sales Accounts')
-  const directInc = -groupTotal(groups, ledgers, vouchers, p, 'Direct Incomes')
-  const indirectInc = -groupTotal(groups, ledgers, vouchers, p, 'Indirect Income')
-  const openingStock = 0
-  const closingStock = groupTotal(groups, ledgers, vouchers, p, 'Stock-in-hand')
+  const row = (root: string, flip: boolean) =>
+    groupRow(groups, ledgers, vouchers, p, root, flip)
 
-  const left = [
-    { name: 'Opening Stock', amount: openingStock },
-    { name: 'Purchase Accounts', amount: purchase },
-    { name: 'Direct Expenses', amount: directExp },
-    { name: 'Indirect Expenses', amount: indirectExp },
+  const purchases = row('Purchase Accounts', false)
+  const directExp = row('Direct Expenses', false)
+  const indirectExp = row('Indirect Expenses', false)
+  const sales = row('Sales Accounts', true)
+  const directInc = row('Direct Incomes', true)
+  const indirectInc = row('Indirect Income', true)
+
+  const { openingStock, closingStock } = stockFigures(
+    groups,
+    ledgers,
+    stockItems,
+    vouchers,
+    p,
+    integrate,
+  )
+
+  // Trading account: Gross Profit
+  const tradingDr =
+    openingStock + purchases.amount + directExp.amount
+  const tradingCr =
+    sales.amount + directInc.amount + closingStock
+  const grossProfit = tradingCr - tradingDr
+
+  const tradingLeft: PLRow[] = [
+    { name: 'Opening Stock', amount: openingStock, children: [] },
+    purchases,
+    directExp,
   ]
-  const right = [
-    { name: 'Sales Accounts', amount: sales },
-    { name: 'Direct Incomes', amount: directInc },
-    { name: 'Closing Stock', amount: closingStock },
-    { name: 'Indirect Income', amount: indirectInc },
+  const tradingRight: PLRow[] = [
+    sales,
+    directInc,
+    { name: 'Closing Stock', amount: closingStock, children: [] },
   ]
-  const totalLeft = left.reduce((s, r) => s + r.amount, 0)
-  const totalRight = right.reduce((s, r) => s + r.amount, 0)
+  if (grossProfit >= 0)
+    tradingLeft.push({
+      name: 'Gross Profit c/o',
+      amount: grossProfit,
+      children: [],
+      emphasis: true,
+    })
+  else
+    tradingRight.push({
+      name: 'Gross Loss c/o',
+      amount: -grossProfit,
+      children: [],
+      emphasis: true,
+    })
+  const tradingTotal = Math.max(tradingDr, tradingCr)
+
+  // Income statement: Nett Profit
+  const netProfit =
+    grossProfit + indirectInc.amount - indirectExp.amount
+  const lowerLeft: PLRow[] = []
+  const lowerRight: PLRow[] = []
+  if (grossProfit >= 0)
+    lowerRight.push({
+      name: 'Gross Profit b/f',
+      amount: grossProfit,
+      children: [],
+      emphasis: true,
+    })
+  else
+    lowerLeft.push({
+      name: 'Gross Loss b/f',
+      amount: -grossProfit,
+      children: [],
+      emphasis: true,
+    })
+  lowerLeft.push(indirectExp)
+  lowerRight.push(indirectInc)
+  if (netProfit >= 0)
+    lowerLeft.push({
+      name: 'Nett Profit',
+      amount: netProfit,
+      children: [],
+      emphasis: true,
+    })
+  else
+    lowerRight.push({
+      name: 'Nett Loss',
+      amount: -netProfit,
+      children: [],
+      emphasis: true,
+    })
+  const lowerTotal = Math.max(
+    lowerLeft.reduce((s, r) => s + r.amount, 0),
+    lowerRight.reduce((s, r) => s + r.amount, 0),
+  )
+
   return {
-    left,
-    right,
-    totalLeft,
-    totalRight,
-    netProfit: totalRight - totalLeft,
+    tradingLeft,
+    tradingRight,
+    grossProfit,
+    tradingTotal,
+    lowerLeft,
+    lowerRight,
+    netProfit,
+    lowerTotal,
+    openingStock,
+    closingStock,
   }
 }
 
@@ -325,20 +488,45 @@ const ASSET_ROOTS = [
 export function balanceSheet(
   groups: Group[],
   ledgers: Ledger[],
+  stockItems: StockItem[],
   vouchers: Voucher[],
   p: Period,
   detailed: boolean,
+  integrate: boolean,
 ): BSResult {
+  // Stock-in-hand ledgers are pure valuation carriers — their value
+  // comes from stockFigures, never from postings.
+  const stockNames = groupsUnder(groups, ['Stock-in-hand'])
+
   const block = (root: string, flip: boolean): BSGroupBlock => {
     const names = groupsUnder(groups, [root])
-    const members = ledgersInGroups(ledgers, names)
+    const members = ledgersInGroups(ledgers, names).filter(
+      (l) => !stockNames.has(l.under),
+    )
     const children = members
       .map((l) => {
         const raw = closingAt(vouchers, l, p)
         return { name: l.name, amount: flip ? -raw : raw }
       })
       .filter((c) => c.amount !== 0)
-    const amount = children.reduce((s, c) => s + c.amount, 0)
+    let amount = children.reduce((s, c) => s + c.amount, 0)
+    if (root === 'Current Assets') {
+      const { closingStock } = stockFigures(
+        groups,
+        ledgers,
+        stockItems,
+        vouchers,
+        p,
+        integrate,
+      )
+      if (closingStock !== 0) {
+        children.unshift({
+          name: 'Stock-in-hand',
+          amount: closingStock,
+        })
+        amount += closingStock
+      }
+    }
     return {
       name: root,
       amount,
@@ -346,7 +534,14 @@ export function balanceSheet(
     }
   }
 
-  const pl = profitAndLoss(groups, ledgers, vouchers, p)
+  const pl = profitAndLoss(
+    groups,
+    ledgers,
+    stockItems,
+    vouchers,
+    p,
+    integrate,
+  )
 
   // The reference design always shows these groups, even at zero;
   // other groups appear only when they carry a balance.

@@ -92,6 +92,10 @@ export default function Utility() {
           { label: 'Backup', onClick: backup },
           { label: 'Backup And Mail', onClick: backupAndMail },
           { label: 'Restore', onClick: restore },
+          {
+            label: 'Settings',
+            onClick: () => navigate('/settings'),
+          },
           { label: 'Delete Company', onClick: delCompany },
         ]}
       />

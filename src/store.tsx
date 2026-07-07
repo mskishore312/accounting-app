@@ -13,6 +13,9 @@ import {
   Group,
   Ledger,
   Period,
+  StockGroup,
+  StockItem,
+  Unit,
   Voucher,
   VoucherType,
 } from './types'
@@ -27,14 +30,26 @@ export function uid(): string {
   )
 }
 
+export function normalizeData(d: Partial<AppData>): AppData {
+  return {
+    companies: d.companies ?? [],
+    groups: d.groups ?? [],
+    ledgers: d.ledgers ?? [],
+    vouchers: d.vouchers ?? [],
+    units: d.units ?? [],
+    stockGroups: d.stockGroups ?? [],
+    stockItems: d.stockItems ?? [],
+  }
+}
+
 function loadData(): AppData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw) as AppData
+    if (raw) return normalizeData(JSON.parse(raw))
   } catch {
     /* corrupted storage — start fresh */
   }
-  return { companies: [], groups: [], ledgers: [], vouchers: [] }
+  return normalizeData({})
 }
 
 function loadPeriods(): Record<string, Period> {
@@ -75,6 +90,21 @@ interface StoreValue {
   companyLedgers: Ledger[]
   companyVouchers: Voucher[]
   nextVchNo: (t: VoucherType) => number
+  // Inventory masters
+  companyUnits: Unit[]
+  companyStockGroups: StockGroup[]
+  companyStockItems: StockItem[]
+  addUnit: (u: Omit<Unit, 'id' | 'companyId'>) => Unit | string
+  deleteUnit: (id: string) => string | null
+  addStockGroup: (
+    g: Omit<StockGroup, 'id' | 'companyId'>,
+  ) => StockGroup | string
+  deleteStockGroup: (id: string) => string | null
+  addStockItem: (
+    s: Omit<StockItem, 'id' | 'companyId'>,
+  ) => StockItem | string
+  updateStockItem: (id: string, patch: Partial<StockItem>) => void
+  deleteStockItem: (id: string) => string | null
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
@@ -175,6 +205,7 @@ export function StoreProvider({
           reserved: true,
         },
       ]
+      comp.integrateInventory = comp.integrateInventory ?? true
       setData((prev) => ({
         ...prev,
         companies: [...prev.companies, comp],
@@ -205,6 +236,13 @@ export function StoreProvider({
         groups: prev.groups.filter((g) => g.companyId !== id),
         ledgers: prev.ledgers.filter((l) => l.companyId !== id),
         vouchers: prev.vouchers.filter((v) => v.companyId !== id),
+        units: prev.units.filter((u) => u.companyId !== id),
+        stockGroups: prev.stockGroups.filter(
+          (g) => g.companyId !== id,
+        ),
+        stockItems: prev.stockItems.filter(
+          (s) => s.companyId !== id,
+        ),
       }))
       setActiveCompanyId((cur) => (cur === id ? null : cur))
     },
@@ -343,11 +381,179 @@ export function StoreProvider({
 
   const restoreData: StoreValue['restoreData'] = useCallback(
     (d) => {
-      setData(d)
+      setData(normalizeData(d))
       setActiveCompanyId(null)
     },
     [],
   )
+
+  // ---------- Inventory masters ----------
+  const companyUnits = useMemo(
+    () =>
+      data.units
+        .filter((u) => u.companyId === activeCompanyId)
+        .sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    [data.units, activeCompanyId],
+  )
+
+  const companyStockGroups = useMemo(
+    () =>
+      data.stockGroups
+        .filter((g) => g.companyId === activeCompanyId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [data.stockGroups, activeCompanyId],
+  )
+
+  const companyStockItems = useMemo(
+    () =>
+      data.stockItems
+        .filter((s) => s.companyId === activeCompanyId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [data.stockItems, activeCompanyId],
+  )
+
+  const addUnit: StoreValue['addUnit'] = useCallback(
+    (u) => {
+      if (!activeCompanyId) return 'No company selected'
+      const symbol = u.symbol.trim()
+      if (!symbol) return 'Unit symbol is required'
+      if (
+        companyUnits.some(
+          (x) => x.symbol.toLowerCase() === symbol.toLowerCase(),
+        )
+      )
+        return 'Unit already exists'
+      const unit: Unit = {
+        ...u,
+        symbol,
+        id: uid(),
+        companyId: activeCompanyId,
+      }
+      setData((prev) => ({ ...prev, units: [...prev.units, unit] }))
+      return unit
+    },
+    [activeCompanyId, companyUnits],
+  )
+
+  const deleteUnit: StoreValue['deleteUnit'] = useCallback(
+    (id) => {
+      const unit = data.units.find((u) => u.id === id)
+      if (!unit) return 'Unit not found'
+      const used = data.stockItems.some(
+        (s) =>
+          s.companyId === unit.companyId && s.unit === unit.symbol,
+      )
+      if (used) return 'Unit is used by stock items'
+      setData((prev) => ({
+        ...prev,
+        units: prev.units.filter((u) => u.id !== id),
+      }))
+      return null
+    },
+    [data.units, data.stockItems],
+  )
+
+  const addStockGroup: StoreValue['addStockGroup'] = useCallback(
+    (g) => {
+      if (!activeCompanyId) return 'No company selected'
+      const name = g.name.trim()
+      if (!name) return 'Stock group name is required'
+      if (
+        companyStockGroups.some(
+          (x) => x.name.toLowerCase() === name.toLowerCase(),
+        )
+      )
+        return 'Stock group already exists'
+      const grp: StockGroup = {
+        ...g,
+        name,
+        id: uid(),
+        companyId: activeCompanyId,
+      }
+      setData((prev) => ({
+        ...prev,
+        stockGroups: [...prev.stockGroups, grp],
+      }))
+      return grp
+    },
+    [activeCompanyId, companyStockGroups],
+  )
+
+  const deleteStockGroup: StoreValue['deleteStockGroup'] =
+    useCallback(
+      (id) => {
+        const grp = data.stockGroups.find((g) => g.id === id)
+        if (!grp) return 'Stock group not found'
+        const used =
+          data.stockItems.some(
+            (s) =>
+              s.companyId === grp.companyId && s.group === grp.name,
+          ) ||
+          data.stockGroups.some(
+            (g) =>
+              g.companyId === grp.companyId && g.under === grp.name,
+          )
+        if (used) return 'Stock group is in use'
+        setData((prev) => ({
+          ...prev,
+          stockGroups: prev.stockGroups.filter((g) => g.id !== id),
+        }))
+        return null
+      },
+      [data.stockGroups, data.stockItems],
+    )
+
+  const addStockItem: StoreValue['addStockItem'] = useCallback(
+    (s) => {
+      if (!activeCompanyId) return 'No company selected'
+      const name = s.name.trim()
+      if (!name) return 'Stock item name is required'
+      if (
+        companyStockItems.some(
+          (x) => x.name.toLowerCase() === name.toLowerCase(),
+        )
+      )
+        return 'Stock item already exists'
+      const item: StockItem = {
+        ...s,
+        name,
+        id: uid(),
+        companyId: activeCompanyId,
+      }
+      setData((prev) => ({
+        ...prev,
+        stockItems: [...prev.stockItems, item],
+      }))
+      return item
+    },
+    [activeCompanyId, companyStockItems],
+  )
+
+  const updateStockItem: StoreValue['updateStockItem'] =
+    useCallback((id, patch) => {
+      setData((prev) => ({
+        ...prev,
+        stockItems: prev.stockItems.map((s) =>
+          s.id === id ? { ...s, ...patch } : s,
+        ),
+      }))
+    }, [])
+
+  const deleteStockItem: StoreValue['deleteStockItem'] =
+    useCallback(
+      (id) => {
+        const used = data.vouchers.some((v) =>
+          (v.invLines ?? []).some((ln) => ln.itemId === id),
+        )
+        if (used) return 'Stock item is used in vouchers'
+        setData((prev) => ({
+          ...prev,
+          stockItems: prev.stockItems.filter((s) => s.id !== id),
+        }))
+        return null
+      },
+      [data.vouchers],
+    )
 
   const companyGroups = useMemo(
     () =>
@@ -398,6 +604,16 @@ export function StoreProvider({
     companyLedgers,
     companyVouchers,
     nextVchNo,
+    companyUnits,
+    companyStockGroups,
+    companyStockItems,
+    addUnit,
+    deleteUnit,
+    addStockGroup,
+    deleteStockGroup,
+    addStockItem,
+    updateStockItem,
+    deleteStockItem,
   }
 
   return (

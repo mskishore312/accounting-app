@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Dialog } from './ui'
-import { VOUCHER_TYPES } from '../types'
+import { ALL_VOUCHER_TYPES } from '../types'
 
 export type InfoType =
   | 'Date'
@@ -150,7 +150,7 @@ export function SearchDialog({
             value={vchType}
             onChange={(e) => setVchType(e.target.value)}
           >
-            {VOUCHER_TYPES.map((t) => (
+            {ALL_VOUCHER_TYPES.map((t) => (
               <option key={t}>{t}</option>
             ))}
           </select>

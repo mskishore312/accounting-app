@@ -3,8 +3,10 @@ import {
   Navigate,
   Route,
   Routes,
+  useParams,
 } from 'react-router-dom'
 import { StoreProvider, useStore } from './store'
+import { vchFromSlug, INVENTORY_VOUCHER_TYPES } from './types'
 import SelectCompany from './pages/SelectCompany'
 import CompanyForm from './pages/CompanyForm'
 import Gateway from './pages/Gateway'
@@ -27,6 +29,31 @@ import TrialBalancePage from './pages/TrialBalance'
 import FinalReports from './pages/FinalReports'
 import ProfitLoss from './pages/ProfitLoss'
 import BalanceSheetPage from './pages/BalanceSheet'
+import InventoryMenu from './pages/InventoryMenu'
+import StockItemList from './pages/StockItemList'
+import StockItemForm from './pages/StockItemForm'
+import {
+  StockGroupsList,
+  UnitsList,
+} from './pages/StockGroupsUnits'
+import InventoryVoucherForm from './pages/InventoryVoucherForm'
+import StockSummary, {
+  StockItemReport,
+} from './pages/StockSummary'
+import Settings from './pages/Settings'
+
+/** Routes inventory voucher types to their dedicated form */
+function VoucherFormSwitch() {
+  const { type } = useParams()
+  const vchType = vchFromSlug(type ?? 'receipt')
+  if (INVENTORY_VOUCHER_TYPES.includes(vchType))
+    return (
+      <InventoryVoucherForm
+        physical={vchType === 'Physical Stock'}
+      />
+    )
+  return <VoucherForm />
+}
 
 function RequireCompany({
   children,
@@ -110,6 +137,78 @@ export default function App() {
             }
           />
           <Route
+            path="/masters/inventory"
+            element={
+              <RequireCompany>
+                <InventoryMenu />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/masters/stockitems"
+            element={
+              <RequireCompany>
+                <StockItemList />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/masters/stockitems/new"
+            element={
+              <RequireCompany>
+                <StockItemForm />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/masters/stockitems/:id"
+            element={
+              <RequireCompany>
+                <StockItemForm />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/masters/stockgroups"
+            element={
+              <RequireCompany>
+                <StockGroupsList />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/masters/units"
+            element={
+              <RequireCompany>
+                <UnitsList />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <RequireCompany>
+                <Settings />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/reports/stock"
+            element={
+              <RequireCompany>
+                <StockSummary />
+              </RequireCompany>
+            }
+          />
+          <Route
+            path="/reports/stock/:itemId"
+            element={
+              <RequireCompany>
+                <StockItemReport />
+              </RequireCompany>
+            }
+          />
+          <Route
             path="/vouchers"
             element={
               <RequireCompany>
@@ -129,7 +228,7 @@ export default function App() {
             path="/vouchers/:type/new"
             element={
               <RequireCompany>
-                <VoucherForm />
+                <VoucherFormSwitch />
               </RequireCompany>
             }
           />
@@ -137,7 +236,7 @@ export default function App() {
             path="/vouchers/:type/:id"
             element={
               <RequireCompany>
-                <VoucherForm />
+                <VoucherFormSwitch />
               </RequireCompany>
             }
           />

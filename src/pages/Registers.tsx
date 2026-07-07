@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { AppBar, MenuButtons, PageTitle } from '../components/ui'
 import { useStore } from '../store'
-import { VOUCHER_TYPES } from '../types'
+import { ALL_VOUCHER_TYPES, vchSlug } from '../types'
 
 /** Registers: pick a voucher type, view its register */
 export default function Registers() {
@@ -14,9 +14,9 @@ export default function Registers() {
       <AppBar />
       <PageTitle>Registers</PageTitle>
       <MenuButtons
-        items={VOUCHER_TYPES.map((t) => ({
+        items={ALL_VOUCHER_TYPES.map((t) => ({
           label: `${t} Register (${count(t)})`,
-          onClick: () => navigate(`/vouchers/${t.toLowerCase()}`),
+          onClick: () => navigate(`/vouchers/${vchSlug(t)}`),
         }))}
       />
     </div>

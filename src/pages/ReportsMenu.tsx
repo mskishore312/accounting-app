@@ -30,6 +30,10 @@ export default function ReportsMenu() {
             onClick: () => navigate('/reports/registers'),
           },
           {
+            label: 'Stock Summary',
+            onClick: () => navigate('/reports/stock'),
+          },
+          {
             label: 'List Of Accounts',
             onClick: () => navigate('/reports/accounts'),
           },

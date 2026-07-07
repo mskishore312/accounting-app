@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { AppBar, MenuButtons, PageTitle } from '../components/ui'
 import { useStore } from '../store'
-import { VOUCHER_TYPES } from '../types'
+import { ALL_VOUCHER_TYPES, vchSlug } from '../types'
 
 export default function VouchersMenu() {
   const navigate = useNavigate()
@@ -14,9 +14,9 @@ export default function VouchersMenu() {
       <div className="subtitle">{company?.name}</div>
       <PageTitle>Vouchers</PageTitle>
       <MenuButtons
-        items={VOUCHER_TYPES.map((t) => ({
+        items={ALL_VOUCHER_TYPES.map((t) => ({
           label: `${t} (${count(t)})`,
-          onClick: () => navigate(`/vouchers/${t.toLowerCase()}`),
+          onClick: () => navigate(`/vouchers/${vchSlug(t)}`),
         }))}
       />
       <div className="menu-note">

@@ -14,6 +14,7 @@ export default function BalanceSheetPage() {
     company,
     companyGroups,
     companyLedgers,
+    companyStockItems,
     companyVouchers,
     period,
   } = useStore()
@@ -24,9 +25,11 @@ export default function BalanceSheetPage() {
   const bs = balanceSheet(
     companyGroups,
     companyLedgers,
+    companyStockItems,
     companyVouchers,
     period,
     detailed,
+    company?.integrateInventory ?? true,
   )
 
   return (
