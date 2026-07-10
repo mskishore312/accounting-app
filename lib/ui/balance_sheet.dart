@@ -30,6 +30,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
   // Net Profit/Loss
   double netProfit = 0;
   ReportViewMode viewMode = ReportViewMode.condensed;
+  final Set<String> expandedGroups = <String>{};
 
   @override
   void initState() {
@@ -303,6 +304,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
 
   Widget _buildAssetsSection() {
     return _buildGroupedSection(
+      sectionKey: 'assets',
       data: assetsData,
       borderColor: Colors.blue.shade200,
       emptyMessage: 'No assets for this period',
@@ -311,6 +313,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
 
   Widget _buildLiabilitiesSection() {
     return _buildGroupedSection(
+      sectionKey: 'liabilities',
       data: liabilitiesData,
       borderColor: Colors.orange.shade200,
       emptyMessage: 'No liabilities for this period',
@@ -318,6 +321,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
   }
 
   Widget _buildGroupedSection({
+    required String sectionKey,
     required Map<String, List<Map<String, dynamic>>> data,
     required Color borderColor,
     required String emptyMessage,
@@ -352,10 +356,33 @@ class _BalanceSheetState extends State<BalanceSheet> {
               0,
               (sum, item) => sum + (item['balance'] as double),
             );
+            final expansionKey = '$sectionKey:${entry.key}';
+            final isExpanded = expandedGroups.contains(expansionKey);
 
             if (viewMode == ReportViewMode.condensed) {
               return <Widget>[
-                _buildSubtotalRow(entry.key, groupTotal),
+                _buildExpandableGroupRow(
+                  entry.key,
+                  groupTotal,
+                  isExpanded: isExpanded,
+                  onToggle: () {
+                    setState(() {
+                      if (isExpanded) {
+                        expandedGroups.remove(expansionKey);
+                      } else {
+                        expandedGroups.add(expansionKey);
+                      }
+                    });
+                  },
+                ),
+                if (isExpanded)
+                  ...entry.value.map(
+                    (item) => _buildAccountItem(
+                      item['name'] as String,
+                      item['balance'] as double,
+                      isIndented: true,
+                    ),
+                  ),
               ];
             }
 
@@ -371,6 +398,56 @@ class _BalanceSheetState extends State<BalanceSheet> {
               _buildSubtotalRow('Total ${entry.key}', groupTotal),
             ];
           }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExpandableGroupRow(
+    String label,
+    double amount, {
+    required bool isExpanded,
+    required VoidCallback onToggle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: isExpanded ? 'Collapse group' : 'Expand group',
+            icon: Icon(
+              isExpanded
+                  ? Icons.keyboard_arrow_down
+                  : Icons.keyboard_arrow_right,
+              color: const Color(0xFF2C5545),
+            ),
+            onPressed: onToggle,
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: onToggle,
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF2C5545),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            amount.toStringAsFixed(2),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF2C5545),
+            ),
+          ),
+          const SizedBox(width: 16),
         ],
       ),
     );

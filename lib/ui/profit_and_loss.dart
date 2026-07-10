@@ -25,6 +25,7 @@ class _ProfitAndLossState extends State<ProfitAndLoss> {
   DateTime? endDate;
   String? booksBeginningDate;
   ReportViewMode viewMode = ReportViewMode.condensed;
+  final Set<String> expandedGroups = <String>{};
 
   @override
   void initState() {
@@ -163,14 +164,37 @@ class _ProfitAndLossState extends State<ProfitAndLoss> {
                 0,
                 (sum, item) => sum + (item['amount'] as double),
               );
+              final expansionKey = '$title:${entry.key}';
+              final isExpanded = expandedGroups.contains(expansionKey);
               final groupRow = _buildAmountRow(
                 entry.key,
                 groupTotal,
                 isGroup: true,
+                isExpandable: viewMode == ReportViewMode.condensed,
+                isExpanded: isExpanded,
+                onToggle: () {
+                  setState(() {
+                    if (isExpanded) {
+                      expandedGroups.remove(expansionKey);
+                    } else {
+                      expandedGroups.add(expansionKey);
+                    }
+                  });
+                },
               );
 
               if (viewMode == ReportViewMode.condensed) {
-                return <Widget>[groupRow];
+                return <Widget>[
+                  groupRow,
+                  if (isExpanded)
+                    ...entry.value.map(
+                      (item) => _buildAmountRow(
+                        item['name'] as String,
+                        item['amount'] as double,
+                        isIndented: true,
+                      ),
+                    ),
+                ];
               }
 
               return <Widget>[
@@ -209,6 +233,9 @@ class _ProfitAndLossState extends State<ProfitAndLoss> {
     double amount, {
     bool isGroup = false,
     bool isIndented = false,
+    bool isExpandable = false,
+    bool isExpanded = false,
+    VoidCallback? onToggle,
   }) {
     return Padding(
       padding: EdgeInsets.only(
@@ -218,13 +245,28 @@ class _ProfitAndLossState extends State<ProfitAndLoss> {
       ),
       child: Row(
         children: [
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: isGroup ? FontWeight.w600 : FontWeight.normal,
+          if (isExpandable)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: isExpanded ? 'Collapse group' : 'Expand group',
+              icon: Icon(
+                isExpanded
+                    ? Icons.keyboard_arrow_down
+                    : Icons.keyboard_arrow_right,
                 color: const Color(0xFF2C5545),
+              ),
+              onPressed: onToggle,
+            ),
+          Expanded(
+            child: InkWell(
+              onTap: isExpandable ? onToggle : null,
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: isGroup ? FontWeight.w600 : FontWeight.normal,
+                  color: const Color(0xFF2C5545),
+                ),
               ),
             ),
           ),
