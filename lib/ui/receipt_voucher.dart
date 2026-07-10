@@ -1036,26 +1036,49 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                           ),
                         ],
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          const totalStyle = TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF2C5545),
+                          );
+
+                          final debitTotal = Text(
                             'Total Debit: ${_totalDebit.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF2C5545),
-                            ),
-                          ),
-                          Text(
+                            style: totalStyle,
+                          );
+                          final creditTotal = Text(
                             'Total Credit: ${_totalCredit.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF2C5545),
-                            ),
-                          ),
-                        ],
+                            style: totalStyle,
+                          );
+
+                          // On phones the two totals do not reliably fit side by
+                          // side, especially with large amounts or larger text.
+                          if (constraints.maxWidth < 420) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                debitTotal,
+                                const SizedBox(height: 8),
+                                creditTotal,
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            children: [
+                              Expanded(child: debitTotal),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: creditTotal,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                     
