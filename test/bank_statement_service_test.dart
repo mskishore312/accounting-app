@@ -66,4 +66,14 @@ void main() {
       'No confident suggestion — choose a ledger',
     );
   });
+
+  test('allows an extracted OCR amount to be corrected before posting', () {
+    final transaction = BankStatementService.parseExtractedText('''
+01/04/2026 UPI/DR OFFICE RENT 8,000.00 DR 22,000.00 CR
+''').single;
+
+    transaction.amount = 800.00;
+
+    expect(transaction.amount, 800.00);
+  });
 }
