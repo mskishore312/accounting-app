@@ -234,6 +234,12 @@ class _BankStatementImportState extends State<BankStatementImport> {
       _showMessage('Choose a ledger for every selected transaction');
       return;
     }
+    if (selected.any(
+      (item) => item.amountError != null || item.amount <= 0,
+    )) {
+      _showMessage('Correct every invalid amount before posting');
+      return;
+    }
 
     setState(() => isPosting = true);
     try {
@@ -377,10 +383,42 @@ class _BankStatementImportState extends State<BankStatementImport> {
                                             ),
                                           ),
                                         ),
-                                        Text(
-                                          '₹${item.amount.toStringAsFixed(2)}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
+                                        SizedBox(
+                                          width: 135,
+                                          child: TextFormField(
+                                            key: ValueKey(item),
+                                            initialValue:
+                                                item.amount.toStringAsFixed(2),
+                                            keyboardType: const TextInputType
+                                                .numberWithOptions(
+                                              decimal: true,
+                                            ),
+                                            textAlign: TextAlign.end,
+                                            decoration: InputDecoration(
+                                              labelText: 'Amount',
+                                              prefixText: '₹ ',
+                                              errorText: item.amountError,
+                                              isDense: true,
+                                              border:
+                                                  const OutlineInputBorder(),
+                                            ),
+                                            onChanged: (value) {
+                                              final parsed = double.tryParse(
+                                                value
+                                                    .replaceAll(',', '')
+                                                    .trim(),
+                                              );
+                                              setState(() {
+                                                if (parsed == null ||
+                                                    parsed <= 0) {
+                                                  item.amountError =
+                                                      'Invalid amount';
+                                                } else {
+                                                  item.amount = parsed;
+                                                  item.amountError = null;
+                                                }
+                                              });
+                                            },
                                           ),
                                         ),
                                       ],
