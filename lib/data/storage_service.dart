@@ -494,8 +494,6 @@ class StorageService {
   // Voucher number operations
   static Future<String> getNextVoucherNumber(String voucherType) async {
     final db = await _instance.database;
-    final company = await getSelectedCompany();
-    final companyId = company?['id'] as int? ?? 0;
 
     String prefix = '';
     switch (voucherType.toLowerCase()) {
@@ -507,10 +505,10 @@ class StorageService {
 
     final result = await db.rawQuery('''
       SELECT voucher_number FROM Vouchers
-      WHERE company_id = ? AND type = ? AND voucher_number LIKE '$prefix%'
+      WHERE type = ? AND voucher_number LIKE '$prefix%'
       ORDER BY CAST(SUBSTR(voucher_number, 2) AS INTEGER) DESC
       LIMIT 1
-    ''', [companyId, voucherType]);
+    ''', [voucherType]);
 
     int nextNumber = 1;
     if (result.isNotEmpty) {
@@ -658,6 +656,64 @@ class StorageService {
   static Future<int> insertVoucherEntry(Map<String, dynamic> entry, [DatabaseExecutor? txn]) async {
     final db = txn ?? await _instance.database; // Use transaction or default db
     return await db.insert('VoucherEntries', entry);
+  }
+
+  static Future<int> importBankStatementTransactions({
+    required int bankLedgerId,
+    required List<Map<String, dynamic>> transactions,
+  }) async {
+    final company = await getSelectedCompany();
+    if (company == null) throw Exception('No company selected');
+    final db = await _instance.database;
+
+    return db.transaction<int>((txn) async {
+      int imported = 0;
+      for (final transaction in transactions) {
+        final isDeposit = transaction['is_deposit'] as bool;
+        final type = isDeposit ? 'Receipt' : 'Payment';
+        final prefix = isDeposit ? 'R' : 'P';
+        final result = await txn.rawQuery('''
+          SELECT voucher_number FROM Vouchers
+          WHERE type = ? AND voucher_number LIKE '$prefix%'
+          ORDER BY CAST(SUBSTR(voucher_number, 2) AS INTEGER) DESC
+          LIMIT 1
+        ''', [type]);
+        final lastNumber = result.isEmpty
+            ? 0
+            : int.tryParse(
+                    (result.first['voucher_number'] as String).substring(1)) ??
+                0;
+        final voucherNumber = '$prefix${lastNumber + 1}';
+        final amount = (transaction['amount'] as num).toDouble();
+        final description = transaction['description'] as String? ?? '';
+        final counterpartLedgerId = transaction['counterpart_ledger_id'] as int;
+
+        final voucherId = await saveVoucher({
+          'company_id': company['id'],
+          'voucher_number': voucherNumber,
+          'voucher_date': transaction['voucher_date'],
+          'type': type,
+          'total': amount,
+        }, txn);
+
+        await insertVoucherEntry({
+          'voucher_id': voucherId,
+          'ledger_id': isDeposit ? bankLedgerId : counterpartLedgerId,
+          'description': 'Bank statement import: $description',
+          'debit': amount,
+          'credit': 0.0,
+        }, txn);
+        await insertVoucherEntry({
+          'voucher_id': voucherId,
+          'ledger_id': isDeposit ? counterpartLedgerId : bankLedgerId,
+          'description': 'Bank statement import: $description',
+          'debit': 0.0,
+          'credit': amount,
+        }, txn);
+        imported++;
+      }
+      return imported;
+    });
   }
 
 

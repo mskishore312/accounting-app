@@ -60,25 +60,12 @@ class _JournalVoucherState extends State<JournalVoucher> {
   
   Future<void> _loadExistingVoucher() async {
     try {
-      // Get the voucher data
-      final vouchers = await StorageService.getVouchers();
-      final voucher = vouchers.firstWhere((v) => v['id'] == widget.voucherId);
-      _existingVoucher = voucher;
-      
-      // Set voucher number and date
-      _voucherNumberController.text = voucher['voucher_number'] as String;
-      
-      // Convert date from YYYY-MM-DD to DD/MM/YYYY
-      final dateStr = voucher['voucher_date'] as String;
-      final dateParts = dateStr.split('-');
-      if (dateParts.length == 3) {
-        _dateController.text = "${dateParts[2]}/${dateParts[1]}/${dateParts[0]}";
+      final voucher = await StorageService.getVoucherById(widget.voucherId!);
+      if (voucher == null) {
+        throw Exception('Journal voucher not found');
       }
-      
-      // First load the ledgers
       await _loadLedgers();
-      
-      // Clear existing entries
+
       for (var entry in debitEntries) {
         entry.controller.dispose();
       }
@@ -87,73 +74,71 @@ class _JournalVoucherState extends State<JournalVoucher> {
       }
       debitEntries.clear();
       creditEntries.clear();
-      
-      // Add a debit entry
-      final controller1 = TextEditingController();
-      controller1.text = voucher['total'].toString();
-      
-      debitEntries.add(DebitEntry(
-        controller: controller1,
-        selectedLedger: null, // Don't set the selectedLedger yet
-      ));
-      
-      // Add a credit entry
-      final controller2 = TextEditingController();
-      controller2.text = voucher['total'].toString();
-      
-      creditEntries.add(CreditEntry(
-        controller: controller2,
-        selectedLedger: null, // Don't set the selectedLedger yet
-      ));
-      
-      // Get the voucher entries to retrieve the narration
-      final voucherEntries = await StorageService.getVoucherEntries(widget.voucherId!);
-      
-      // Get narration from the first entry that has a description
-      if (voucherEntries.isNotEmpty) {
-        for (var entry in voucherEntries) {
-          if (entry['description'] != null && (entry['description'] as String).isNotEmpty) {
-            _narrationController.text = entry['description'] as String;
-            break;
-          }
+
+      final voucherEntries =
+          (voucher['entries'] as List<dynamic>? ?? const []);
+      String narration = '';
+      double loadedDebits = 0;
+      double loadedCredits = 0;
+
+      for (final rawEntry in voucherEntries) {
+        final entry = rawEntry as Map<String, dynamic>;
+        final debit = (entry['debit'] as num?)?.toDouble() ?? 0;
+        final credit = (entry['credit'] as num?)?.toDouble() ?? 0;
+        final ledgerName = entry['ledger_name'] as String?;
+        final description = entry['description'] as String? ?? '';
+        if (narration.isEmpty && description.isNotEmpty) {
+          narration = description;
+        }
+
+        if (debit > 0) {
+          debitEntries.add(
+            DebitEntry(
+              controller: TextEditingController(text: debit.toStringAsFixed(2)),
+              selectedLedger: ledgerName,
+            ),
+          );
+          loadedDebits += debit;
+        }
+        if (credit > 0) {
+          creditEntries.add(
+            CreditEntry(
+              controller: TextEditingController(text: credit.toStringAsFixed(2)),
+              selectedLedger: ledgerName,
+            ),
+          );
+          loadedCredits += credit;
         }
       }
-      
-      // Calculate totals
-      _calculateTotals();
-      
-      // Set the selected ledgers after a short delay to ensure the dropdowns are built
-      Future.delayed(Duration(milliseconds: 100), () async {
-        if (!mounted) return;
-        
-        setState(() {
-          // For journal vouchers, we need to set both debit and credit entries
-          if (allLedgers.isNotEmpty) {
-            // For debit entry, use the first ledger as a default
-            if (debitEntries.isNotEmpty) {
-              debitEntries[0].selectedLedger = allLedgers[0]['name'] as String;
-            }
-            
-            // For credit entry, use the particulars from the voucher if available
-            if (creditEntries.isNotEmpty && voucher['particulars'] != null && (voucher['particulars'] as String).isNotEmpty) {
-              // Find the ledger with the matching name
-              for (var ledger in allLedgers) {
-                if (ledger['name'] == voucher['particulars']) {
-                  creditEntries[0].selectedLedger = ledger['name'] as String;
-                  break;
-                }
-              }
-              
-              // If no matching ledger was found, use the second ledger (if available)
-              if (creditEntries[0].selectedLedger == null && allLedgers.length > 1) {
-                creditEntries[0].selectedLedger = allLedgers[1]['name'] as String;
-              } else if (creditEntries[0].selectedLedger == null) {
-                // If only one ledger is available, use it for both entries
-                creditEntries[0].selectedLedger = allLedgers[0]['name'] as String;
-              }
-            }
-          }
-        });
+
+      if (debitEntries.isEmpty) {
+        debitEntries.add(
+          DebitEntry(
+            controller: TextEditingController(),
+            selectedLedger: null,
+          ),
+        );
+      }
+      if (creditEntries.isEmpty) {
+        creditEntries.add(
+          CreditEntry(
+            controller: TextEditingController(),
+            selectedLedger: null,
+          ),
+        );
+      }
+
+      final dateParts = (voucher['voucher_date'] as String).split('-');
+      if (!mounted) return;
+      setState(() {
+        _existingVoucher = voucher;
+        _voucherNumberController.text = voucher['voucher_number'] as String;
+        _dateController.text = dateParts.length == 3
+            ? '${dateParts[2]}/${dateParts[1]}/${dateParts[0]}'
+            : voucher['voucher_date'] as String;
+        _narrationController.text = narration;
+        totalDebits = loadedDebits;
+        totalCredits = loadedCredits;
       });
     } catch (e) {
       print('Error loading existing voucher: $e');
@@ -320,10 +305,18 @@ class _JournalVoucherState extends State<JournalVoucher> {
   Future<void> _saveVoucher() async {
     if (!_formKey.currentState!.validate()) return;
     
-    // Check if debits equal credits
-    if (totalDebits != totalCredits) {
+    _calculateTotals();
+
+    // Allow for harmless floating-point rounding, but never save an empty journal.
+    if ((totalDebits - totalCredits).abs() > 0.005) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Total debits must equal total credits')),
+      );
+      return;
+    }
+    if (totalDebits <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter at least one debit and credit amount')),
       );
       return;
     }
@@ -373,61 +366,44 @@ class _JournalVoucherState extends State<JournalVoucher> {
         voucher['id'] = widget.voucherId;
       }
 
-      // Save the voucher (this will update if ID is included, otherwise insert)
-      final voucherId = await StorageService.saveVoucher(voucher);
+      final database = await StorageService().database;
+      await database.transaction((transaction) async {
+        final voucherId = await StorageService.saveVoucher(voucher, transaction);
 
-      // If editing, we need to delete the old entries first
-      if (_isEditMode && widget.voucherId != null) {
-        // Instead of deleting the entire voucher, we'll directly delete just the voucher entries
-        // This is safer and avoids issues with narration
-        await StorageService.deleteVoucherEntries(voucherId);
-      }
-
-      // Add voucher entries for all debit accounts
-      for (var entry in debitEntries) {
-        if (entry.selectedLedger != null && entry.controller.text.isNotEmpty) {
-          final amount = double.tryParse(entry.controller.text) ?? 0.0;
-          if (amount > 0) {
-            // Get the narration text and log it for debugging
-            String narration = _narrationController.text;
-            print('Journal voucher narration (debit): "$narration"');
-            
-            // Create the entry map
-            Map<String, dynamic> entryMap = {
-              'voucher_id': voucherId,
-              'ledger_id': allLedgers.firstWhere((l) => l['name'] == entry.selectedLedger)['id'],
-              'description': narration,
-              'debit': amount,
-            };
-            
-            // Insert the entry
-            await StorageService.insertVoucherEntry(entryMap);
-          }
+        if (_isEditMode) {
+          await StorageService.deleteVoucherEntries(voucherId, transaction);
         }
-      }
 
-      // Add voucher entries for all credit accounts
-      for (var entry in creditEntries) {
-        if (entry.selectedLedger != null && entry.controller.text.isNotEmpty) {
-          final amount = double.tryParse(entry.controller.text) ?? 0.0;
-          if (amount > 0) {
-            // Use the same narration for consistency
-            String narration = _narrationController.text;
-            print('Journal voucher narration (credit): "$narration"');
-            
-            // Create the entry map
-            Map<String, dynamic> entryMap = {
-              'voucher_id': voucherId,
-              'ledger_id': allLedgers.firstWhere((l) => l['name'] == entry.selectedLedger)['id'],
-              'description': narration,
-              'credit': amount,
-            };
-            
-            // Insert the entry
-            await StorageService.insertVoucherEntry(entryMap);
-          }
+        for (final entry in debitEntries) {
+          final amount = double.tryParse(entry.controller.text) ?? 0;
+          if (amount <= 0 || entry.selectedLedger == null) continue;
+          final ledger = allLedgers.firstWhere(
+            (candidate) => candidate['name'] == entry.selectedLedger,
+          );
+          await StorageService.insertVoucherEntry({
+            'voucher_id': voucherId,
+            'ledger_id': ledger['id'],
+            'description': _narrationController.text.trim(),
+            'debit': amount,
+            'credit': 0.0,
+          }, transaction);
         }
-      }
+
+        for (final entry in creditEntries) {
+          final amount = double.tryParse(entry.controller.text) ?? 0;
+          if (amount <= 0 || entry.selectedLedger == null) continue;
+          final ledger = allLedgers.firstWhere(
+            (candidate) => candidate['name'] == entry.selectedLedger,
+          );
+          await StorageService.insertVoucherEntry({
+            'voucher_id': voucherId,
+            'ledger_id': ledger['id'],
+            'description': _narrationController.text.trim(),
+            'debit': 0.0,
+            'credit': amount,
+          }, transaction);
+        }
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
