@@ -3,6 +3,7 @@ import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/services/financial_statement_service.dart';
 import 'package:accounting_app/services/period_service.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
+import 'package:accounting_app/ui/widgets/report_view_toggle.dart';
 import 'package:accounting_app/ui/ledger_view.dart';
 import 'package:provider/provider.dart';
 
@@ -22,6 +23,58 @@ class _TrialBalanceState extends State<TrialBalance> {
   DateTime? startDate;
   DateTime? endDate;
   String? booksBeginningDate;
+  ReportViewMode viewMode = ReportViewMode.condensed;
+  final Set<String> expandedGroups = <String>{};
+
+  List<Map<String, dynamic>> get displayedTrialBalanceData {
+    if (viewMode == ReportViewMode.detailed) {
+      return trialBalanceData;
+    }
+
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final item in trialBalanceData) {
+      final classification =
+          (item['classification'] as String?)?.trim().isNotEmpty == true
+              ? item['classification'] as String
+              : 'Unclassified';
+      grouped.putIfAbsent(classification, () => []).add(item);
+    }
+
+    final rows = <Map<String, dynamic>>[];
+    final groupNames = grouped.keys.toList()..sort();
+    for (final groupName in groupNames) {
+      final ledgers = grouped[groupName]!;
+      final debit = ledgers.fold<double>(
+        0,
+        (sum, item) => sum + (item['debit'] as double),
+      );
+      final credit = ledgers.fold<double>(
+        0,
+        (sum, item) => sum + (item['credit'] as double),
+      );
+      rows.add({
+        'name': groupName,
+        'classification': '${ledgers.length} ledgers',
+        'debit': debit,
+        'credit': credit,
+        'isGroupSummary': true,
+        'groupName': groupName,
+      });
+
+      if (expandedGroups.contains(groupName)) {
+        rows.addAll(
+          ledgers.map(
+            (item) => {
+              ...item,
+              'isGroupChild': true,
+              'groupName': groupName,
+            },
+          ),
+        );
+      }
+    }
+    return rows;
+  }
 
   @override
   void initState() {
@@ -278,10 +331,38 @@ class _TrialBalanceState extends State<TrialBalance> {
     return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 
+  Future<void> _openLedger(Map<String, dynamic> item) async {
+    final ledgerId = item['id'] as int;
+    final periodService = Provider.of<PeriodService>(context, listen: false);
+    final navigator = Navigator.of(context);
+
+    if (startDate != null && endDate != null) {
+      periodService.setPeriod(startDate!, endDate!);
+    }
+
+    final ledgers = await StorageService.getLedgers();
+    final ledger = ledgers.firstWhere(
+      (candidate) => candidate['id'] == ledgerId,
+      orElse: () => {},
+    );
+    if (ledger.isEmpty || !mounted) return;
+
+    final entries = await StorageService.getLedgerReport(ledgerId);
+    navigator.push(
+      MaterialPageRoute(
+        builder: (context) => LedgerView(
+          ledger: ledger,
+          initialEntries: entries,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final difference = (totalDebit - totalCredit).abs();
     final isBalanced = difference < 0.01; // Allow for small floating point errors
+    final reportRows = displayedTrialBalanceData;
 
     return Scaffold(
       backgroundColor: const Color(0xFFE0F2E9),
@@ -330,6 +411,10 @@ class _TrialBalanceState extends State<TrialBalance> {
                       ),
                     );
                   },
+                ),
+                ReportViewToggle(
+                  mode: viewMode,
+                  onChanged: (mode) => setState(() => viewMode = mode),
                 ),
 
                 // Stock valuation notes
@@ -456,53 +541,83 @@ class _TrialBalanceState extends State<TrialBalance> {
                                 ),
                               ],
                               rows: [
-                                ...trialBalanceData.map(
-                                  (item) => DataRow(
+                                ...reportRows.map((item) {
+                                  final isGroupSummary =
+                                      item['isGroupSummary'] == true;
+                                  final isGroupChild =
+                                      item['isGroupChild'] == true;
+                                  final groupName =
+                                      item['groupName'] as String?;
+                                  final isExpanded = groupName != null &&
+                                      expandedGroups.contains(groupName);
+
+                                  return DataRow(
+                                    color: isGroupSummary
+                                        ? WidgetStateProperty.all(
+                                            const Color(0xFFE8F5E9),
+                                          )
+                                        : null,
                                     cells: [
                                       DataCell(
-                                        GestureDetector(
-                                          onTap: () async {
-                                            // Navigate to ledger view for this account
-                                            final ledgerId = item['id'] as int;
-
-                                            // Capture context-dependent values before async gap
-                                            final periodService = Provider.of<PeriodService>(context, listen: false);
-                                            final navigator = Navigator.of(context);
-
-                                            // Set the period to match Trial Balance period
-                                            if (startDate != null && endDate != null) {
-                                              periodService.setPeriod(startDate!, endDate!);
-                                            }
-
-                                            // Get full ledger data
-                                            final ledgers = await StorageService.getLedgers();
-                                            final ledger = ledgers.firstWhere(
-                                              (l) => l['id'] == ledgerId,
-                                              orElse: () => {},
-                                            );
-
-                                            if (ledger.isNotEmpty && mounted) {
-                                              // Get ledger entries for the period
-                                              final entries = await StorageService.getLedgerReport(ledgerId);
-
-                                              navigator.push(
-                                                MaterialPageRoute(
-                                                  builder: (context) => LedgerView(
-                                                    ledger: ledger,
-                                                    initialEntries: entries,
-                                                  ),
+                                        Row(
+                                          children: [
+                                            if (isGroupSummary)
+                                              IconButton(
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                tooltip: isExpanded
+                                                    ? 'Collapse group'
+                                                    : 'Expand group',
+                                                icon: Icon(
+                                                  isExpanded
+                                                      ? Icons
+                                                          .keyboard_arrow_down
+                                                      : Icons
+                                                          .keyboard_arrow_right,
+                                                  color: const Color(0xFF2C5545),
                                                 ),
-                                              );
-                                            }
-                                          },
-                                          child: Text(
-                                            item['name'] as String,
-                                            style: const TextStyle(
+                                                onPressed: () {
+                                                  setState(() {
+                                                    if (isExpanded) {
+                                                      expandedGroups
+                                                          .remove(groupName);
+                                                    } else {
+                                                      expandedGroups
+                                                          .add(groupName!);
+                                                    }
+                                                  });
+                                                },
+                                              )
+                                            else if (isGroupChild)
+                                              const SizedBox(width: 32),
+                                            InkWell(
+                                              onTap: isGroupSummary
+                                                  ? () {
+                                                      setState(() {
+                                                        if (isExpanded) {
+                                                          expandedGroups.remove(
+                                                            groupName,
+                                                          );
+                                                        } else {
+                                                          expandedGroups.add(
+                                                            groupName!,
+                                                          );
+                                                        }
+                                                      });
+                                                    }
+                                                  : () => _openLedger(item),
+                                              child: Text(
+                                                item['name'] as String,
+                                                style: TextStyle(
                                               fontSize: 15,
                                               color: Colors.black,
-                                              fontWeight: FontWeight.w500,
+                                                  fontWeight: isGroupSummary
+                                                      ? FontWeight.bold
+                                                      : FontWeight.w500,
+                                                ),
+                                              ),
                                             ),
-                                          ),
+                                          ],
                                         ),
                                       ),
                                       DataCell(
@@ -535,8 +650,8 @@ class _TrialBalanceState extends State<TrialBalance> {
                                         ),
                                       )),
                                     ],
-                                  ),
-                                ),
+                                  );
+                                }),
                                 // Difference row (if not balanced)
                                 if (!isBalanced)
                                   DataRow(
