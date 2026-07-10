@@ -17,10 +17,11 @@ class BankStatementTransaction {
 
   final DateTime date;
   final String description;
-  final double amount;
+  double amount;
   BankTransactionDirection direction;
   final String rawText;
   bool selected = true;
+  String? amountError;
   int? suggestedLedgerId;
   String suggestionLabel = 'Review ledger';
 }
