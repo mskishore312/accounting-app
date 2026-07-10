@@ -3,6 +3,7 @@ import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/services/financial_statement_service.dart';
 import 'package:accounting_app/services/period_service.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
+import 'package:accounting_app/ui/widgets/report_view_toggle.dart';
 import 'package:accounting_app/ui/ledger_view.dart';
 import 'package:provider/provider.dart';
 
@@ -22,6 +23,43 @@ class _TrialBalanceState extends State<TrialBalance> {
   DateTime? startDate;
   DateTime? endDate;
   String? booksBeginningDate;
+  ReportViewMode viewMode = ReportViewMode.condensed;
+
+  List<Map<String, dynamic>> get displayedTrialBalanceData {
+    if (viewMode == ReportViewMode.detailed) {
+      return trialBalanceData;
+    }
+
+    final grouped = <String, Map<String, dynamic>>{};
+    for (final item in trialBalanceData) {
+      final classification =
+          (item['classification'] as String?)?.trim().isNotEmpty == true
+              ? item['classification'] as String
+              : 'Unclassified';
+      final group = grouped.putIfAbsent(
+        classification,
+        () => {
+          'name': classification,
+          'classification': '0 ledgers',
+          'debit': 0.0,
+          'credit': 0.0,
+          'ledgerCount': 0,
+        },
+      );
+      group['debit'] =
+          (group['debit'] as double) + (item['debit'] as double);
+      group['credit'] =
+          (group['credit'] as double) + (item['credit'] as double);
+      group['ledgerCount'] = (group['ledgerCount'] as int) + 1;
+      group['classification'] = '${group['ledgerCount']} ledgers';
+    }
+
+    final rows = grouped.values.toList();
+    rows.sort(
+      (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+    );
+    return rows;
+  }
 
   @override
   void initState() {
@@ -282,6 +320,7 @@ class _TrialBalanceState extends State<TrialBalance> {
   Widget build(BuildContext context) {
     final difference = (totalDebit - totalCredit).abs();
     final isBalanced = difference < 0.01; // Allow for small floating point errors
+    final reportRows = displayedTrialBalanceData;
 
     return Scaffold(
       backgroundColor: const Color(0xFFE0F2E9),
@@ -330,6 +369,10 @@ class _TrialBalanceState extends State<TrialBalance> {
                       ),
                     );
                   },
+                ),
+                ReportViewToggle(
+                  mode: viewMode,
+                  onChanged: (mode) => setState(() => viewMode = mode),
                 ),
 
                 // Stock valuation notes
@@ -456,12 +499,13 @@ class _TrialBalanceState extends State<TrialBalance> {
                                 ),
                               ],
                               rows: [
-                                ...trialBalanceData.map(
+                                ...reportRows.map(
                                   (item) => DataRow(
                                     cells: [
                                       DataCell(
                                         GestureDetector(
-                                          onTap: () async {
+                                          onTap: viewMode == ReportViewMode.detailed
+                                              ? () async {
                                             // Navigate to ledger view for this account
                                             final ledgerId = item['id'] as int;
 
@@ -494,7 +538,8 @@ class _TrialBalanceState extends State<TrialBalance> {
                                                 ),
                                               );
                                             }
-                                          },
+                                                }
+                                              : null,
                                           child: Text(
                                             item['name'] as String,
                                             style: const TextStyle(
