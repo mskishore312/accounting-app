@@ -22,7 +22,7 @@ dependencies:
   share_plus: ^7.2.1
   url_launcher: ^6.2.2
   file_picker: ^8.1.7
-  syncfusion_flutter_pdf: ^27.2.5
+  syncfusion_flutter_pdf: ^29.1.38
 
 dev_dependencies:
   flutter_test:
