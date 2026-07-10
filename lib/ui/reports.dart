@@ -6,6 +6,7 @@ import 'package:accounting_app/final_reports.dart';
 import 'package:accounting_app/trial_balance.dart';
 import 'package:accounting_app/services/period_service.dart'; // Added
 import 'package:accounting_app/ui/widgets/date_range_selector.dart'; // Added
+import 'package:accounting_app/ui/bank_statement_import.dart';
 import 'package:provider/provider.dart'; // Added
 
 class Reports extends StatefulWidget { // Changed to StatefulWidget
@@ -231,6 +232,15 @@ class _ReportsState extends State<Reports> { // Added State class
                   _buildButton(
                     'Cash/Bank Book',
                     onPressed: () => _showComingSoon(context, 'Cash/Bank Book'),
+                  ),
+                  _buildButton(
+                    'AI Bank Statement Import',
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const BankStatementImport(),
+                      ),
+                    ),
                   ),
                   _buildButton(
                     'Group Summary',
