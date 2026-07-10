@@ -3,6 +3,7 @@ import 'package:accounting_app/services/financial_statement_service.dart';
 import 'package:accounting_app/services/period_service.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
+import 'package:accounting_app/ui/widgets/report_view_toggle.dart';
 import 'package:provider/provider.dart';
 
 class BalanceSheet extends StatefulWidget {
@@ -28,6 +29,8 @@ class _BalanceSheetState extends State<BalanceSheet> {
 
   // Net Profit/Loss
   double netProfit = 0;
+  ReportViewMode viewMode = ReportViewMode.condensed;
+  final Set<String> expandedGroups = <String>{};
 
   @override
   void initState() {
@@ -300,171 +303,151 @@ class _BalanceSheetState extends State<BalanceSheet> {
   }
 
   Widget _buildAssetsSection() {
-    double fixedAssetsTotal = 0;
-    double investmentsTotal = 0;
-    double currentAssetsTotal = 0;
-    double loansAdvancesTotal = 0;
-    double miscExpensesTotal = 0;
+    return _buildGroupedSection(
+      sectionKey: 'assets',
+      data: assetsData,
+      borderColor: Colors.blue.shade200,
+      emptyMessage: 'No assets for this period',
+    );
+  }
 
-    // Calculate subtotals
-    for (var item in assetsData['Fixed Assets'] ?? []) {
-      fixedAssetsTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Investments'] ?? []) {
-      investmentsTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Current Assets'] ?? []) {
-      currentAssetsTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Loans & Advances'] ?? []) {
-      loansAdvancesTotal += item['balance'] as double;
-    }
-    for (var item in assetsData['Misc. Expenses'] ?? []) {
-      miscExpensesTotal += item['balance'] as double;
-    }
+  Widget _buildLiabilitiesSection() {
+    return _buildGroupedSection(
+      sectionKey: 'liabilities',
+      data: liabilitiesData,
+      borderColor: Colors.orange.shade200,
+      emptyMessage: 'No liabilities for this period',
+    );
+  }
+
+  Widget _buildGroupedSection({
+    required String sectionKey,
+    required Map<String, List<Map<String, dynamic>>> data,
+    required Color borderColor,
+    required String emptyMessage,
+  }) {
+    final populatedGroups = data.entries
+        .where((entry) => entry.value.isNotEmpty)
+        .toList();
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.shade200, width: 2),
+        border: Border.all(color: borderColor, width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Fixed Assets
-          if ((assetsData['Fixed Assets'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Fixed Assets'),
-            ...(assetsData['Fixed Assets'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Fixed Assets'] ?? []).length > 1)
-              _buildSubtotalRow('Total Fixed Assets', fixedAssetsTotal),
-          ],
-
-          // Investments
-          if ((assetsData['Investments'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Investments'),
-            ...(assetsData['Investments'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Investments'] ?? []).length > 1)
-              _buildSubtotalRow('Total Investments', investmentsTotal),
-          ],
-
-          // Current Assets
-          if ((assetsData['Current Assets'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Current Assets'),
-            ...(assetsData['Current Assets'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Current Assets'] ?? []).length > 1)
-              _buildSubtotalRow('Total Current Assets', currentAssetsTotal),
-          ],
-
-          // Loans & Advances (Asset)
-          if ((assetsData['Loans & Advances'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Loans & Advances (Asset)'),
-            ...(assetsData['Loans & Advances'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Loans & Advances'] ?? []).length > 1)
-              _buildSubtotalRow('Total Loans & Advances', loansAdvancesTotal),
-          ],
-
-          // Misc. Expenses (Asset)
-          if ((assetsData['Misc. Expenses'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Misc. Expenses (Asset)'),
-            ...(assetsData['Misc. Expenses'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((assetsData['Misc. Expenses'] ?? []).length > 1)
-              _buildSubtotalRow('Total Misc. Expenses', miscExpensesTotal),
-          ],
-
-          if (totalAssets == 0)
-            const Padding(
-              padding: EdgeInsets.all(16),
+          if (populatedGroups.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(16),
               child: Text(
-                'No assets for this period',
-                style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                emptyMessage,
+                style: const TextStyle(
+                  color: Colors.grey,
+                  fontStyle: FontStyle.italic,
+                ),
               ),
             ),
+          ...populatedGroups.expand((entry) {
+            final groupTotal = entry.value.fold<double>(
+              0,
+              (sum, item) => sum + (item['balance'] as double),
+            );
+            final expansionKey = '$sectionKey:${entry.key}';
+            final isExpanded = expandedGroups.contains(expansionKey);
+
+            if (viewMode == ReportViewMode.condensed) {
+              return <Widget>[
+                _buildExpandableGroupRow(
+                  entry.key,
+                  groupTotal,
+                  isExpanded: isExpanded,
+                  onToggle: () {
+                    setState(() {
+                      if (isExpanded) {
+                        expandedGroups.remove(expansionKey);
+                      } else {
+                        expandedGroups.add(expansionKey);
+                      }
+                    });
+                  },
+                ),
+                if (isExpanded)
+                  ...entry.value.map(
+                    (item) => _buildAccountItem(
+                      item['name'] as String,
+                      item['balance'] as double,
+                      isIndented: true,
+                    ),
+                  ),
+              ];
+            }
+
+            return <Widget>[
+              _buildCategoryHeader(entry.key),
+              ...entry.value.map(
+                (item) => _buildAccountItem(
+                  item['name'] as String,
+                  item['balance'] as double,
+                  isIndented: true,
+                ),
+              ),
+              _buildSubtotalRow('Total ${entry.key}', groupTotal),
+            ];
+          }),
         ],
       ),
     );
   }
 
-  Widget _buildLiabilitiesSection() {
-    double capitalReservesTotal = 0;
-    double loansTotal = 0;
-    double bankODTotal = 0;
-    double currentLiabilitiesTotal = 0;
-
-    // Calculate subtotals
-    for (var item in liabilitiesData['Capital & Reserves'] ?? []) {
-      capitalReservesTotal += item['balance'] as double;
-    }
-    for (var item in liabilitiesData['Loans'] ?? []) {
-      loansTotal += item['balance'] as double;
-    }
-    for (var item in liabilitiesData['Bank Overdraft'] ?? []) {
-      bankODTotal += item['balance'] as double;
-    }
-    for (var item in liabilitiesData['Current Liabilities'] ?? []) {
-      currentLiabilitiesTotal += item['balance'] as double;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange.shade200, width: 2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildExpandableGroupRow(
+    String label,
+    double amount, {
+    required bool isExpanded,
+    required VoidCallback onToggle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
         children: [
-          // Capital & Reserves
-          if ((liabilitiesData['Capital & Reserves'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Capital & Reserves'),
-            ...(liabilitiesData['Capital & Reserves'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Capital & Reserves'] ?? []).length > 1)
-              _buildSubtotalRow('Total Capital & Reserves', capitalReservesTotal),
-          ],
-
-          // Loans (Liability)
-          if ((liabilitiesData['Loans'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Loans'),
-            ...(liabilitiesData['Loans'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Loans'] ?? []).length > 1)
-              _buildSubtotalRow('Total Loans', loansTotal),
-          ],
-
-          // Bank Overdraft
-          if ((liabilitiesData['Bank Overdraft'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Bank Overdraft'),
-            ...(liabilitiesData['Bank Overdraft'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Bank Overdraft'] ?? []).length > 1)
-              _buildSubtotalRow('Total Bank Overdraft', bankODTotal),
-          ],
-
-          // Current Liabilities
-          if ((liabilitiesData['Current Liabilities'] ?? []).isNotEmpty) ...[
-            _buildCategoryHeader('Current Liabilities'),
-            ...(liabilitiesData['Current Liabilities'] ?? []).map((item) =>
-                _buildAccountItem(item['name'] as String, item['balance'] as double, isIndented: true)),
-            if ((liabilitiesData['Current Liabilities'] ?? []).length > 1)
-              _buildSubtotalRow('Total Current Liabilities', currentLiabilitiesTotal),
-          ],
-
-          if (totalLiabilities == 0 && netProfit == 0)
-            const Padding(
-              padding: EdgeInsets.all(16),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: isExpanded ? 'Collapse group' : 'Expand group',
+            icon: Icon(
+              isExpanded
+                  ? Icons.keyboard_arrow_down
+                  : Icons.keyboard_arrow_right,
+              color: const Color(0xFF2C5545),
+            ),
+            onPressed: onToggle,
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: onToggle,
               child: Text(
-                'No liabilities for this period',
-                style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF2C5545),
+                ),
               ),
             ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            amount.toStringAsFixed(2),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF2C5545),
+            ),
+          ),
+          const SizedBox(width: 16),
         ],
       ),
     );
@@ -545,6 +528,11 @@ class _BalanceSheetState extends State<BalanceSheet> {
                           ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  ReportViewToggle(
+                    mode: viewMode,
+                    onChanged: (mode) => setState(() => viewMode = mode),
                   ),
                   const SizedBox(height: 20),
 
