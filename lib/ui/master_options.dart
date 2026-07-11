@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/ui/account_masters.dart';
+import 'package:accounting_app/ui/inventory_items.dart';
 import 'package:accounting_app/data/storage_service.dart';
 
 class MasterOptions extends StatefulWidget {
@@ -204,9 +205,10 @@ class _MasterOptionsState extends State<MasterOptions> {
                               context,
                               'Inventory Masters (0)',
                               () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Inventory Masters coming soon'),
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const InventoryItemsScreen(),
                                   ),
                                 );
                               },
