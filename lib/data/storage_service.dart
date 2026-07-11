@@ -23,7 +23,7 @@ class StorageService {
     String path = join(dbPath, 'accounting_app.db');
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -132,6 +132,8 @@ class StorageService {
       )
     ''');
 
+    await _createInvoiceTables(db);
+
     // Create indexes
     await db.execute('CREATE INDEX idx_company_name ON Companies(name)');
     await db.execute('CREATE INDEX idx_voucher_date ON Vouchers(voucher_date)');
@@ -206,6 +208,64 @@ class StorageService {
         }
       }
     }
+    if (oldVersion < 7) {
+      await _createInvoiceTables(db);
+    }
+  }
+
+  static Future<void> _createInvoiceTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS InventoryItems (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        hsn TEXT,
+        unit TEXT NOT NULL DEFAULT 'Nos',
+        default_rate REAL NOT NULL DEFAULT 0,
+        gst_rate REAL NOT NULL DEFAULT 0,
+        stock_qty REAL NOT NULL DEFAULT 0,
+        FOREIGN KEY (company_id) REFERENCES Companies(id) ON DELETE CASCADE,
+        UNIQUE(company_id, name)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS InvoiceDetails (
+        voucher_id INTEGER PRIMARY KEY,
+        invoice_mode TEXT NOT NULL,
+        party_ledger_id INTEGER NOT NULL,
+        account_ledger_id INTEGER NOT NULL,
+        taxable_value REAL NOT NULL DEFAULT 0,
+        cgst REAL NOT NULL DEFAULT 0,
+        sgst REAL NOT NULL DEFAULT 0,
+        igst REAL NOT NULL DEFAULT 0,
+        place_of_supply TEXT,
+        narration TEXT,
+        FOREIGN KEY (voucher_id) REFERENCES Vouchers(id) ON DELETE CASCADE,
+        FOREIGN KEY (party_ledger_id) REFERENCES Ledgers(id),
+        FOREIGN KEY (account_ledger_id) REFERENCES Ledgers(id)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS InvoiceLines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voucher_id INTEGER NOT NULL,
+        inventory_item_id INTEGER,
+        description TEXT NOT NULL,
+        hsn TEXT,
+        quantity REAL NOT NULL DEFAULT 1,
+        rate REAL NOT NULL DEFAULT 0,
+        taxable_value REAL NOT NULL DEFAULT 0,
+        gst_rate REAL NOT NULL DEFAULT 0,
+        cgst REAL NOT NULL DEFAULT 0,
+        sgst REAL NOT NULL DEFAULT 0,
+        igst REAL NOT NULL DEFAULT 0,
+        FOREIGN KEY (voucher_id) REFERENCES Vouchers(id) ON DELETE CASCADE,
+        FOREIGN KEY (inventory_item_id) REFERENCES InventoryItems(id) ON DELETE SET NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_invoice_lines_voucher ON InvoiceLines(voucher_id)',
+    );
   }
 
   // Company operations
@@ -500,6 +560,9 @@ class StorageService {
       case 'receipt': prefix = 'R'; break;
       case 'payment': prefix = 'P'; break;
       case 'journal': prefix = 'J'; break;
+      case 'contra': prefix = 'C'; break;
+      case 'sales': prefix = 'S'; break;
+      case 'purchase': prefix = 'B'; break;
       default: prefix = 'V';
     }
 
@@ -656,6 +719,300 @@ class StorageService {
   static Future<int> insertVoucherEntry(Map<String, dynamic> entry, [DatabaseExecutor? txn]) async {
     final db = txn ?? await _instance.database; // Use transaction or default db
     return await db.insert('VoucherEntries', entry);
+  }
+
+  static Future<List<Map<String, dynamic>>> getVouchersByType(
+    String type,
+  ) async {
+    final company = await getSelectedCompany();
+    if (company == null) return [];
+    final db = await _instance.database;
+    return db.rawQuery('''
+      SELECT v.*,
+        COALESCE(
+          (SELECT l.name FROM VoucherEntries ve
+           JOIN Ledgers l ON l.id = ve.ledger_id
+           WHERE ve.voucher_id = v.id
+           ORDER BY ve.id LIMIT 1), '') AS particulars
+      FROM Vouchers v
+      WHERE v.company_id = ? AND v.type = ?
+      ORDER BY v.voucher_date DESC, v.id DESC
+    ''', [company['id'], type]);
+  }
+
+  static Future<int> saveContraVoucher({
+    int? voucherId,
+    required String voucherNumber,
+    required String voucherDate,
+    required int fromLedgerId,
+    required int toLedgerId,
+    required double amount,
+    required String narration,
+  }) async {
+    final company = await getSelectedCompany();
+    if (company == null) throw Exception('No company selected');
+    final db = await _instance.database;
+    return db.transaction<int>((txn) async {
+      final id = await saveVoucher({
+        if (voucherId != null) 'id': voucherId,
+        'company_id': company['id'],
+        'voucher_number': voucherNumber,
+        'voucher_date': voucherDate,
+        'type': 'Contra',
+        'total': amount,
+      }, txn);
+      await deleteVoucherEntries(id, txn);
+      await insertVoucherEntry({
+        'voucher_id': id,
+        'ledger_id': toLedgerId,
+        'description': narration,
+        'debit': amount,
+        'credit': 0.0,
+      }, txn);
+      await insertVoucherEntry({
+        'voucher_id': id,
+        'ledger_id': fromLedgerId,
+        'description': narration,
+        'debit': 0.0,
+        'credit': amount,
+      }, txn);
+      return id;
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getInventoryItems() async {
+    final company = await getSelectedCompany();
+    if (company == null) return [];
+    final db = await _instance.database;
+    return db.query(
+      'InventoryItems',
+      where: 'company_id = ?',
+      whereArgs: [company['id']],
+      orderBy: 'name COLLATE NOCASE',
+    );
+  }
+
+  static Future<int> saveInventoryItem(Map<String, dynamic> item) async {
+    final company = await getSelectedCompany();
+    if (company == null) throw Exception('No company selected');
+    final db = await _instance.database;
+    final data = Map<String, dynamic>.from(item)..['company_id'] = company['id'];
+    if (data['id'] != null) {
+      final id = data.remove('id') as int;
+      await db.update('InventoryItems', data, where: 'id = ?', whereArgs: [id]);
+      return id;
+    }
+    return db.insert(
+      'InventoryItems',
+      data,
+      conflictAlgorithm: ConflictAlgorithm.fail,
+    );
+  }
+
+  static Future<int> deleteInventoryItem(int id) async {
+    final db = await _instance.database;
+    return db.delete('InventoryItems', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<int> deleteInvoiceVoucher(int voucherId) async {
+    final db = await _instance.database;
+    return db.transaction<int>((txn) async {
+      final voucher = await txn.query(
+        'Vouchers',
+        columns: ['type'],
+        where: 'id = ?',
+        whereArgs: [voucherId],
+      );
+      final type = voucher.isEmpty ? '' : voucher.first['type'] as String;
+      final lines = await txn.query(
+        'InvoiceLines',
+        where: 'voucher_id = ?',
+        whereArgs: [voucherId],
+      );
+      for (final line in lines) {
+        final itemId = line['inventory_item_id'] as int?;
+        if (itemId == null) continue;
+        final qty = (line['quantity'] as num).toDouble();
+        await txn.rawUpdate(
+          'UPDATE InventoryItems SET stock_qty = stock_qty + ? WHERE id = ?',
+          [type == 'Purchase' ? -qty : qty, itemId],
+        );
+      }
+      return txn.delete('Vouchers', where: 'id = ?', whereArgs: [voucherId]);
+    });
+  }
+
+  static Future<int> _ensureLedger(
+    DatabaseExecutor txn,
+    int companyId,
+    String name,
+    String classification,
+  ) async {
+    final found = await txn.query(
+      'Ledgers',
+      columns: ['id'],
+      where: 'company_id = ? AND LOWER(name) = LOWER(?)',
+      whereArgs: [companyId, name],
+      limit: 1,
+    );
+    if (found.isNotEmpty) return found.first['id'] as int;
+    return txn.insert('Ledgers', {
+      'company_id': companyId,
+      'name': name,
+      'classification': classification,
+      'balance': 0.0,
+    });
+  }
+
+  static Future<int> saveInvoiceVoucher({
+    int? voucherId,
+    required String type,
+    required String voucherNumber,
+    required String voucherDate,
+    required String invoiceMode,
+    required int partyLedgerId,
+    required int accountLedgerId,
+    required String placeOfSupply,
+    required String narration,
+    required List<Map<String, dynamic>> lines,
+  }) async {
+    if (type != 'Sales' && type != 'Purchase') {
+      throw ArgumentError('Invoice type must be Sales or Purchase');
+    }
+    final company = await getSelectedCompany();
+    if (company == null) throw Exception('No company selected');
+    final companyId = company['id'] as int;
+    final taxable = lines.fold<double>(
+      0,
+      (sum, line) => sum + (line['taxable_value'] as num).toDouble(),
+    );
+    final cgst = lines.fold<double>(
+      0,
+      (sum, line) => sum + (line['cgst'] as num).toDouble(),
+    );
+    final sgst = lines.fold<double>(
+      0,
+      (sum, line) => sum + (line['sgst'] as num).toDouble(),
+    );
+    final igst = lines.fold<double>(
+      0,
+      (sum, line) => sum + (line['igst'] as num).toDouble(),
+    );
+    final total = taxable + cgst + sgst + igst;
+    final db = await _instance.database;
+    return db.transaction<int>((txn) async {
+      final id = await saveVoucher({
+        if (voucherId != null) 'id': voucherId,
+        'company_id': companyId,
+        'voucher_number': voucherNumber,
+        'voucher_date': voucherDate,
+        'type': type,
+        'total': total,
+      }, txn);
+      await deleteVoucherEntries(id, txn);
+      final previousLines = await txn.query(
+        'InvoiceLines',
+        where: 'voucher_id = ?',
+        whereArgs: [id],
+      );
+      for (final oldLine in previousLines) {
+        final oldItemId = oldLine['inventory_item_id'] as int?;
+        if (oldItemId == null) continue;
+        final oldQty = (oldLine['quantity'] as num).toDouble();
+        await txn.rawUpdate(
+          'UPDATE InventoryItems SET stock_qty = stock_qty + ? WHERE id = ?',
+          [type == 'Purchase' ? -oldQty : oldQty, oldItemId],
+        );
+      }
+      await txn.delete('InvoiceLines', where: 'voucher_id = ?', whereArgs: [id]);
+      await txn.delete('InvoiceDetails', where: 'voucher_id = ?', whereArgs: [id]);
+
+      await txn.insert('InvoiceDetails', {
+        'voucher_id': id,
+        'invoice_mode': invoiceMode,
+        'party_ledger_id': partyLedgerId,
+        'account_ledger_id': accountLedgerId,
+        'taxable_value': taxable,
+        'cgst': cgst,
+        'sgst': sgst,
+        'igst': igst,
+        'place_of_supply': placeOfSupply,
+        'narration': narration,
+      });
+      for (final line in lines) {
+        await txn.insert('InvoiceLines', {
+          'voucher_id': id,
+          ...line,
+        });
+        final itemId = line['inventory_item_id'] as int?;
+        if (itemId != null) {
+          final qty = (line['quantity'] as num).toDouble();
+          await txn.rawUpdate(
+            'UPDATE InventoryItems SET stock_qty = stock_qty + ? WHERE id = ?',
+            [type == 'Purchase' ? qty : -qty, itemId],
+          );
+        }
+      }
+
+      final isSales = type == 'Sales';
+      await insertVoucherEntry({
+        'voucher_id': id,
+        'ledger_id': partyLedgerId,
+        'description': narration,
+        'debit': isSales ? total : 0.0,
+        'credit': isSales ? 0.0 : total,
+      }, txn);
+      await insertVoucherEntry({
+        'voucher_id': id,
+        'ledger_id': accountLedgerId,
+        'description': narration,
+        'debit': isSales ? 0.0 : taxable,
+        'credit': isSales ? taxable : 0.0,
+      }, txn);
+      for (final tax in <MapEntry<String, double>>[
+        MapEntry('CGST', cgst),
+        MapEntry('SGST', sgst),
+        MapEntry('IGST', igst),
+      ]) {
+        if (tax.value == 0) continue;
+        final ledgerId = await _ensureLedger(
+          txn,
+          companyId,
+          '${isSales ? 'Output' : 'Input'} ${tax.key}',
+          'Duties & Taxes',
+        );
+        await insertVoucherEntry({
+          'voucher_id': id,
+          'ledger_id': ledgerId,
+          'description': narration,
+          'debit': isSales ? 0.0 : tax.value,
+          'credit': isSales ? tax.value : 0.0,
+        }, txn);
+      }
+      return id;
+    });
+  }
+
+  static Future<Map<String, dynamic>?> getInvoiceVoucher(int voucherId) async {
+    final db = await _instance.database;
+    final vouchers = await db.query('Vouchers', where: 'id = ?', whereArgs: [voucherId]);
+    if (vouchers.isEmpty) return null;
+    final details = await db.query(
+      'InvoiceDetails',
+      where: 'voucher_id = ?',
+      whereArgs: [voucherId],
+    );
+    final lines = await db.query(
+      'InvoiceLines',
+      where: 'voucher_id = ?',
+      whereArgs: [voucherId],
+      orderBy: 'id',
+    );
+    return {
+      ...vouchers.first,
+      if (details.isNotEmpty) ...details.first,
+      'lines': lines,
+    };
   }
 
   static Future<int> importBankStatementTransactions({
