@@ -3,6 +3,7 @@ import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/receipt_voucher_list.dart';
 import 'package:accounting_app/ui/payment_voucher_list.dart';
 import 'package:accounting_app/ui/journal_voucher_list.dart';
+import 'package:accounting_app/ui/voucher_type_list.dart';
 import 'package:provider/provider.dart';
 import 'package:accounting_app/services/period_service.dart';
 
@@ -236,25 +237,34 @@ class _AccountingVouchersState extends State<AccountingVouchers> {
                             _buildVoucherButton(
                               'Contra',
                               onPressed: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Contra Voucher coming soon')),
-                                );
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const VoucherTypeList(type: 'Contra'),
+                                  ),
+                                ).then((_) => _loadVouchers());
                               },
                             ),
                             _buildVoucherButton(
                               'Sales',
                               onPressed: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Sales Voucher coming soon')),
-                                );
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const VoucherTypeList(type: 'Sales'),
+                                  ),
+                                ).then((_) => _loadVouchers());
                               },
                             ),
                             _buildVoucherButton(
                               'Purchase',
                               onPressed: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Purchase Voucher coming soon')),
-                                );
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const VoucherTypeList(type: 'Purchase'),
+                                  ),
+                                ).then((_) => _loadVouchers());
                               },
                             ),
                           ],
