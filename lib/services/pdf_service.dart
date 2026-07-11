@@ -7,6 +7,146 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 
 class PdfService {
+  static Future<File> generateTaxInvoicePdf({
+    required Map<String, dynamic> company,
+    required Map<String, dynamic> invoice,
+    required String partyName,
+  }) async {
+    final pdf = pw.Document();
+    final lines = (invoice['lines'] as List).cast<Map<String, dynamic>>();
+    final isSales = invoice['type'] == 'Sales';
+    final cgst = (invoice['cgst'] as num?)?.toDouble() ?? 0;
+    final sgst = (invoice['sgst'] as num?)?.toDouble() ?? 0;
+    final igst = (invoice['igst'] as num?)?.toDouble() ?? 0;
+    final taxable = (invoice['taxable_value'] as num?)?.toDouble() ?? 0;
+    final total = (invoice['total'] as num?)?.toDouble() ?? taxable + cgst + sgst + igst;
+    String money(num value) => value.toDouble().toStringAsFixed(2);
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(28),
+        build: (_) => [
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Expanded(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      company['name'] as String? ?? '',
+                      style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+                    ),
+                    pw.Text(company['address'] as String? ?? ''),
+                    if ((company['tin'] as String? ?? '').isNotEmpty)
+                      pw.Text('GSTIN: ${company['tin']}'),
+                  ],
+                ),
+              ),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text(
+                    isSales ? 'TAX INVOICE' : 'PURCHASE INVOICE',
+                    style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.Text('No: ${invoice['voucher_number']}'),
+                  pw.Text('Date: ${invoice['voucher_date']}'),
+                ],
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 14),
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.all(8),
+            decoration: pw.BoxDecoration(border: pw.Border.all()),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  '${isSales ? 'Bill to' : 'Supplier'}: $partyName',
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                ),
+                if ((invoice['place_of_supply'] as String? ?? '').isNotEmpty)
+                  pw.Text('Place of supply: ${invoice['place_of_supply']}'),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 12),
+          pw.TableHelper.fromTextArray(
+            headers: const ['#', 'Description', 'HSN/SAC', 'Qty', 'Rate', 'Taxable', 'GST %', 'Tax'],
+            data: List.generate(lines.length, (index) {
+              final line = lines[index];
+              final tax = (line['cgst'] as num).toDouble() +
+                  (line['sgst'] as num).toDouble() +
+                  (line['igst'] as num).toDouble();
+              return [
+                '${index + 1}',
+                line['description'],
+                line['hsn'] ?? '',
+                line['quantity'],
+                money(line['rate'] as num),
+                money(line['taxable_value'] as num),
+                money(line['gst_rate'] as num),
+                money(tax),
+              ];
+            }),
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8),
+            cellStyle: const pw.TextStyle(fontSize: 8),
+            cellAlignment: pw.Alignment.centerRight,
+            cellAlignments: {1: pw.Alignment.centerLeft},
+          ),
+          pw.SizedBox(height: 12),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.SizedBox(
+              width: 220,
+              child: pw.Column(
+                children: [
+                  _pdfTotalRow('Taxable value', money(taxable)),
+                  if (cgst != 0) _pdfTotalRow('CGST', money(cgst)),
+                  if (sgst != 0) _pdfTotalRow('SGST', money(sgst)),
+                  if (igst != 0) _pdfTotalRow('IGST', money(igst)),
+                  pw.Divider(),
+                  _pdfTotalRow('Invoice total', 'Rs. ${money(total)}', bold: true),
+                ],
+              ),
+            ),
+          ),
+          if ((invoice['narration'] as String? ?? '').isNotEmpty) ...[
+            pw.SizedBox(height: 18),
+            pw.Text('Narration: ${invoice['narration']}'),
+          ],
+          pw.SizedBox(height: 30),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text('Authorised Signatory'),
+          ),
+        ],
+      ),
+    );
+    final output = await getTemporaryDirectory();
+    final safeNumber = (invoice['voucher_number'] as String).replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    final file = File('${output.path}/${invoice['type']}_$safeNumber.pdf');
+    await file.writeAsBytes(await pdf.save());
+    return file;
+  }
+
+  static pw.Widget _pdfTotalRow(String label, String value, {bool bold = false}) {
+    final style = pw.TextStyle(fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal);
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [pw.Text(label, style: style), pw.Text(value, style: style)],
+      ),
+    );
+  }
+
   static Future<File> generateLedgerPdf({
     required String companyName,
     required String ledgerName,
