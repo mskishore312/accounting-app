@@ -4,6 +4,8 @@ import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/payment_voucher.dart';
 import 'package:accounting_app/ui/receipt_voucher.dart';
 import 'package:accounting_app/ui/journal_voucher.dart';
+import 'package:accounting_app/ui/contra_voucher.dart';
+import 'package:accounting_app/ui/invoice_voucher.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
 import 'package:provider/provider.dart';
 import 'package:accounting_app/services/period_service.dart';
@@ -1100,11 +1102,11 @@ class _LedgerViewState extends State<LedgerView> {
               const SizedBox(height: 8),
               _buildVoucherTypeOption(context, 'Journal', const JournalVoucher()),
               const SizedBox(height: 8),
-              _buildVoucherTypeOption(context, 'Contra', null), // TODO: Add Contra voucher
+              _buildVoucherTypeOption(context, 'Contra', const ContraVoucher()),
               const SizedBox(height: 8),
-              _buildVoucherTypeOption(context, 'Sales', null), // TODO: Add Sales voucher
+              _buildVoucherTypeOption(context, 'Sales', const InvoiceVoucher(type: 'Sales')),
               const SizedBox(height: 8),
-              _buildVoucherTypeOption(context, 'Purchase', null), // TODO: Add Purchase voucher
+              _buildVoucherTypeOption(context, 'Purchase', const InvoiceVoucher(type: 'Purchase')),
             ],
           ),
           actions: [
