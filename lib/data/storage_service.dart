@@ -523,11 +523,21 @@ class StorageService {
     final db = await _instance.database;
 
     if (type != null) {
-      return await db.query(
-        'Vouchers',
-        where: 'company_id = ? AND type = ?',
-        whereArgs: [companyId, type]
-      );
+      // Include the primary (first debit) ledger name as particulars for
+      // voucher list screens.
+      return await db.rawQuery('''
+        SELECT v.*,
+          ( SELECT l.name
+            FROM VoucherEntries ve
+            JOIN Ledgers l ON ve.ledger_id = l.id
+            WHERE ve.voucher_id = v.id AND ve.debit > 0
+            ORDER BY ve.id ASC
+            LIMIT 1
+          ) AS particulars
+        FROM Vouchers v
+        WHERE v.company_id = ? AND v.type = ?
+        ORDER BY v.voucher_date, v.id
+      ''', [companyId, type]);
     }
     return await db.query(
       'Vouchers',

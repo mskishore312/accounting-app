@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:accounting_app/ui/widgets/company_title.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/receipt_voucher.dart';
 import 'package:accounting_app/services/period_service.dart';
@@ -171,14 +172,7 @@ class _ReceiptVoucherListState extends State<ReceiptVoucherList> {
         : AppBar( // Default AppBar
             elevation: 0,
             backgroundColor: const Color(0xFF2C5545),
-            title: const Text(
-              'Kishore', // Consider making this dynamic or removing if not needed
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
+            title: const CompanyTitle(),
             centerTitle: true,
             leading: IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white),

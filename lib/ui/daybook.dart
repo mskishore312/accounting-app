@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:accounting_app/ui/widgets/company_title.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/receipt_voucher.dart';
 import 'package:accounting_app/ui/payment_voucher.dart';
@@ -205,14 +206,7 @@ class _DaybookState extends State<Daybook> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Text(
-                    'Kishore',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
+                  const CompanyTitle(),
                 ],
               ),
         centerTitle: true,

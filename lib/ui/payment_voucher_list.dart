@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:accounting_app/ui/widgets/company_title.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/payment_voucher.dart';
 import 'package:accounting_app/services/period_service.dart';
@@ -179,16 +180,16 @@ class _PaymentVoucherListState extends State<PaymentVoucherList> {
       appBar: AppBar(
         elevation: 0,
         backgroundColor: const Color(0xFF2C5545),
-        title: Text(
-          _selectionMode
-              ? '${_selectedIds.length} selected'
-              : 'Kishore',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
+        title: _selectionMode
+            ? Text(
+                '${_selectedIds.length} selected',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              )
+            : const CompanyTitle(),
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
