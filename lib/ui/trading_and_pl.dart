@@ -3,6 +3,8 @@ import 'package:accounting_app/services/financial_statement_service.dart';
 import 'package:accounting_app/services/period_service.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
+import 'package:accounting_app/ui/widgets/report_view_toggle.dart';
+import 'package:accounting_app/ui/widgets/t_format_table.dart';
 import 'package:provider/provider.dart';
 
 class TradingAndPL extends StatefulWidget {
@@ -14,6 +16,8 @@ class TradingAndPL extends StatefulWidget {
 
 class _TradingAndPLState extends State<TradingAndPL> {
   bool isLoading = true;
+  ReportViewMode viewMode = ReportViewMode.condensed;
+  StatementFormat statementFormat = StatementFormat.tFormat;
   DateTime? startDate;
   DateTime? endDate;
   String? booksBeginningDate;
@@ -23,10 +27,14 @@ class _TradingAndPLState extends State<TradingAndPL> {
   List<Map<String, dynamic>> directExpenses = [];
   List<Map<String, dynamic>> sales = [];
   List<Map<String, dynamic>> directIncome = [];
+  List<Map<String, dynamic>> openingStockList = [];
+  List<Map<String, dynamic>> closingStockList = [];
   double totalPurchases = 0;
   double totalDirectExpenses = 0;
   double totalSales = 0;
   double totalDirectIncome = 0;
+  double openingStock = 0;
+  double closingStock = 0;
   double grossProfit = 0;
 
   // P&L Account data
@@ -90,6 +98,12 @@ class _TradingAndPLState extends State<TradingAndPL> {
           directExpenses = tradingData['directExpenses'] as List<Map<String, dynamic>>;
           sales = tradingData['sales'] as List<Map<String, dynamic>>;
           directIncome = tradingData['directIncome'] as List<Map<String, dynamic>>;
+          openingStockList =
+              tradingData['openingStockList'] as List<Map<String, dynamic>>;
+          closingStockList =
+              tradingData['closingStockList'] as List<Map<String, dynamic>>;
+          openingStock = tradingData['openingStock'] as double;
+          closingStock = tradingData['closingStock'] as double;
           totalPurchases = tradingData['totalPurchases'] as double;
           totalDirectExpenses = tradingData['totalDirectExpenses'] as double;
           totalSales = tradingData['totalSales'] as double;
@@ -168,82 +182,204 @@ class _TradingAndPLState extends State<TradingAndPL> {
     return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 
-  Widget _buildSectionHeader(String title, {Color? backgroundColor}) {
+  // --- Row building -------------------------------------------------
+
+  List<StatementRow> _group(
+    String heading,
+    List<Map<String, dynamic>> items,
+    double total,
+  ) {
+    if (items.isEmpty) return const [];
+    final rows = <StatementRow>[StatementRow(heading, total, isGroup: true)];
+    if (viewMode == ReportViewMode.detailed) {
+      for (final item in items) {
+        rows.add(StatementRow(
+          item['name'] as String,
+          item['balance'] as double,
+          isIndented: true,
+        ));
+      }
+    }
+    return rows;
+  }
+
+  /// Trading Account: closes at gross profit/loss, which is then carried
+  /// down into the Profit & Loss Account below it.
+  Widget _buildTradingAccount() {
+    final left = <StatementRow>[
+      ..._group('Opening Stock', openingStockList, openingStock),
+      ..._group('Purchase Accounts', purchases, totalPurchases),
+      ..._group('Direct Expenses', directExpenses, totalDirectExpenses),
+    ];
+    final right = <StatementRow>[
+      ..._group('Sales Accounts', sales, totalSales),
+      ..._group('Direct Incomes', directIncome, totalDirectIncome),
+      ..._group('Closing Stock', closingStockList, closingStock),
+    ];
+
+    if (grossProfit >= 0) {
+      left.add(StatementRow('Gross Profit c/d', grossProfit, isGroup: true));
+    } else {
+      right.add(StatementRow('Gross Loss c/d', grossProfit.abs(), isGroup: true));
+    }
+
+    final debitTotal = openingStock +
+        totalPurchases +
+        totalDirectExpenses +
+        (grossProfit >= 0 ? grossProfit : 0);
+    final creditTotal = totalSales +
+        totalDirectIncome +
+        closingStock +
+        (grossProfit < 0 ? grossProfit.abs() : 0);
+
+    return TFormatTable(
+      title: 'TRADING ACCOUNT',
+      leftRows: left,
+      rightRows: right,
+      leftTotal: debitTotal,
+      rightTotal: creditTotal,
+      minimumRows: 6,
+    );
+  }
+
+  /// Profit & Loss Account: opens with the gross result brought down and
+  /// closes at the net profit/loss for the period.
+  Widget _buildProfitAndLossAccount() {
+    final left = <StatementRow>[
+      if (grossProfit < 0)
+        StatementRow('Gross Loss b/d', grossProfit.abs(), isGroup: true),
+      ..._group('Indirect Expenses', indirectExpenses, totalIndirectExpenses),
+    ];
+    final right = <StatementRow>[
+      if (grossProfit >= 0)
+        StatementRow('Gross Profit b/d', grossProfit, isGroup: true),
+      ..._group('Indirect Income', indirectIncome, totalIndirectIncome),
+    ];
+
+    if (netProfit >= 0) {
+      left.add(StatementRow('Net Profit', netProfit, isGroup: true));
+    } else {
+      right.add(StatementRow('Net Loss', netProfit.abs(), isGroup: true));
+    }
+
+    final debitTotal = (grossProfit < 0 ? grossProfit.abs() : 0) +
+        totalIndirectExpenses +
+        (netProfit >= 0 ? netProfit : 0);
+    final creditTotal = (grossProfit >= 0 ? grossProfit : 0) +
+        totalIndirectIncome +
+        (netProfit < 0 ? netProfit.abs() : 0);
+
+    return TFormatTable(
+      title: 'PROFIT & LOSS ACCOUNT',
+      leftRows: left,
+      rightRows: right,
+      leftTotal: debitTotal,
+      rightTotal: creditTotal,
+      minimumRows: 5,
+    );
+  }
+
+  Widget _buildTFormat() {
+    return Column(
+      children: [
+        _buildTradingAccount(),
+        const SizedBox(height: 16),
+        _buildProfitAndLossAccount(),
+        const SizedBox(height: 12),
+        _resultBanner(),
+      ],
+    );
+  }
+
+  /// Companies Act 2013, Schedule III — Statement of Profit and Loss.
+  Widget _buildScheduleIII() {
+    final revenue = totalSales;
+    final otherIncome = totalDirectIncome + totalIndirectIncome;
+    final totalIncome = revenue + otherIncome;
+    // A stock increase reduces the charge to the statement.
+    final changeInInventories = openingStock - closingStock;
+    final totalExpenses = totalPurchases +
+        changeInInventories +
+        totalDirectExpenses +
+        totalIndirectExpenses;
+
+    return Column(
+      children: [
+        ScheduleIIISection(
+          title: 'I. INCOME',
+          rows: [
+            const StatementRow('Revenue from operations', null, isGroup: true),
+            StatementRow('Sale of products / services', revenue,
+                isIndented: true),
+            if (viewMode == ReportViewMode.detailed)
+              for (final item in sales)
+                StatementRow('   ${item['name']}', item['balance'] as double,
+                    isIndented: true),
+            const StatementRow('Other income', null, isGroup: true),
+            StatementRow('Other income', otherIncome, isIndented: true),
+          ],
+          total: totalIncome,
+          totalLabel: 'Total Income',
+        ),
+        ScheduleIIISection(
+          title: 'II. EXPENSES',
+          rows: [
+            StatementRow('Purchases of stock-in-trade', totalPurchases,
+                isIndented: true),
+            StatementRow(
+              'Changes in inventories of stock-in-trade',
+              changeInInventories,
+              isIndented: true,
+            ),
+            StatementRow('Direct expenses', totalDirectExpenses,
+                isIndented: true),
+            StatementRow('Other expenses', totalIndirectExpenses,
+                isIndented: true),
+          ],
+          total: totalExpenses,
+          totalLabel: 'Total Expenses',
+        ),
+        ScheduleIIISection(
+          title: 'III. PROFIT BEFORE TAX',
+          rows: [
+            StatementRow('Total income', totalIncome, isIndented: true),
+            StatementRow('Less: total expenses', totalExpenses,
+                isIndented: true),
+          ],
+          total: totalIncome - totalExpenses,
+          totalLabel: netProfit >= 0 ? 'Profit for the period' : 'Loss for the period',
+        ),
+        _resultBanner(),
+      ],
+    );
+  }
+
+  Widget _resultBanner() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
       decoration: BoxDecoration(
-        color: backgroundColor ?? const Color(0xFF4C7380),
-        borderRadius: BorderRadius.circular(8),
+        color: const Color(0xFFD5EADF),
+        border: Border.all(color: kStatementGreen),
       ),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-        ),
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
-
-  Widget _buildAccountItem(String name, double amount, {bool isSubtotal = false}) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: isSubtotal ? 8 : 16,
-        vertical: 6,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Text(
-              name,
-              style: TextStyle(
-                fontSize: isSubtotal ? 15 : 14,
-                fontWeight: isSubtotal ? FontWeight.w600 : FontWeight.normal,
-                color: const Color(0xFF2C5545),
-              ),
-            ),
-          ),
-          Text(
-            amount.toStringAsFixed(2),
-            style: TextStyle(
-              fontSize: isSubtotal ? 15 : 14,
-              fontWeight: isSubtotal ? FontWeight.w600 : FontWeight.normal,
-              color: const Color(0xFF2C5545),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTotalRow(String label, double amount, {Color? backgroundColor, Color? textColor}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: backgroundColor ?? const Color(0xFFC8E6D8),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
         children: [
           Text(
-            label,
-            style: TextStyle(
-              fontSize: 16,
+            '${grossProfit >= 0 ? 'Gross Profit' : 'Gross Loss'}: '
+            '${TFormatTable.formatAmount(grossProfit.abs())}',
+            style: const TextStyle(
               fontWeight: FontWeight.bold,
-              color: textColor ?? const Color(0xFF2C5545),
+              color: kStatementGreen,
             ),
           ),
+          const SizedBox(height: 4),
           Text(
-            amount.toStringAsFixed(2),
-            style: TextStyle(
-              fontSize: 16,
+            '${netProfit >= 0 ? 'Net Profit' : 'Net Loss'}: '
+            '${TFormatTable.formatAmount(netProfit.abs())}',
+            style: const TextStyle(
               fontWeight: FontWeight.bold,
-              color: textColor ?? const Color(0xFF2C5545),
+              fontSize: 16,
+              color: kStatementGreen,
             ),
           ),
         ],
@@ -257,441 +393,60 @@ class _TradingAndPLState extends State<TradingAndPL> {
       backgroundColor: const Color(0xFFE0F2E9),
       appBar: AppBar(
         elevation: 0,
+        backgroundColor: kStatementGreen,
+        iconTheme: const IconThemeData(color: Colors.white),
         title: const Text(
-          'Trading & Profit/Loss Account',
+          'Profit & Loss',
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: Colors.white,
           ),
         ),
-        backgroundColor: const Color(0xFF2C5545),
         actions: [
           IconButton(
             icon: const Icon(Icons.calendar_today, color: Colors.white),
+            tooltip: 'Select Period',
             onPressed: _showDateRangeDialog,
-            tooltip: 'Select Date Range',
           ),
         ],
       ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Period display
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF2C5545), width: 2),
-                    ),
-                    child: Text(
-                      'For the period: ${_formatDate(startDate)} to ${_formatDate(endDate)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF2C5545),
-                      ),
-                      textAlign: TextAlign.center,
+          : Column(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  color: const Color(0xFFE0F2E9),
+                  child: Text(
+                    'Curr. Period ${_formatDate(startDate)} to ${_formatDate(endDate)}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: kStatementGreen,
                     ),
                   ),
-                  const SizedBox(height: 20),
-
-                  // ============ TRADING ACCOUNT ============
-                  _buildSectionHeader('TRADING ACCOUNT', backgroundColor: const Color(0xFF2C5545)),
-                  const SizedBox(height: 12),
-
-                  // Debit Side (Expenses)
-                  Container(
+                ),
+                StatementFormatToggle(
+                  format: statementFormat,
+                  onChanged: (value) =>
+                      setState(() => statementFormat = value),
+                ),
+                ReportViewToggle(
+                  mode: viewMode,
+                  onChanged: (mode) => setState(() => viewMode = mode),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 8, left: 8),
-                          child: Text(
-                            'Debit (Dr.)',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red,
-                            ),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        // Purchases
-                        if (purchases.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Text(
-                              'Purchases:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF2C5545),
-                              ),
-                            ),
-                          ),
-                          ...purchases.map((item) => _buildAccountItem(
-                                '  ${item['name']}',
-                                item['balance'] as double,
-                              )),
-                          if (purchases.length > 1)
-                            _buildAccountItem('Total Purchases', totalPurchases, isSubtotal: true),
-                        ],
-                        // Direct Expenses
-                        if (directExpenses.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Text(
-                              'Direct Expenses:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF2C5545),
-                              ),
-                            ),
-                          ),
-                          ...directExpenses.map((item) => _buildAccountItem(
-                                '  ${item['name']}',
-                                item['balance'] as double,
-                              )),
-                          if (directExpenses.length > 1)
-                            _buildAccountItem('Total Direct Expenses', totalDirectExpenses, isSubtotal: true),
-                        ],
-                        if (purchases.isEmpty && directExpenses.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Text(
-                              'No direct expenses for this period',
-                              style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-                            ),
-                          ),
-                      ],
-                    ),
+                    child: statementFormat == StatementFormat.tFormat
+                        ? _buildTFormat()
+                        : _buildScheduleIII(),
                   ),
-                  const SizedBox(height: 12),
-
-                  // Credit Side (Income)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.green.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 8, left: 8),
-                          child: Text(
-                            'Credit (Cr.)',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                            ),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        // Sales
-                        if (sales.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Text(
-                              'Sales:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF2C5545),
-                              ),
-                            ),
-                          ),
-                          ...sales.map((item) => _buildAccountItem(
-                                '  ${item['name']}',
-                                item['balance'] as double,
-                              )),
-                          if (sales.length > 1)
-                            _buildAccountItem('Total Sales', totalSales, isSubtotal: true),
-                        ],
-                        // Direct Income
-                        if (directIncome.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Text(
-                              'Direct Income:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF2C5545),
-                              ),
-                            ),
-                          ),
-                          ...directIncome.map((item) => _buildAccountItem(
-                                '  ${item['name']}',
-                                item['balance'] as double,
-                              )),
-                          if (directIncome.length > 1)
-                            _buildAccountItem('Total Direct Income', totalDirectIncome, isSubtotal: true),
-                        ],
-                        if (sales.isEmpty && directIncome.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Text(
-                              'No sales or direct income for this period',
-                              style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Gross Profit/Loss
-                  _buildTotalRow(
-                    grossProfit >= 0 ? 'Gross Profit' : 'Gross Loss',
-                    grossProfit.abs(),
-                    backgroundColor: grossProfit >= 0 ? Colors.green.shade100 : Colors.red.shade100,
-                    textColor: grossProfit >= 0 ? Colors.green.shade900 : Colors.red.shade900,
-                  ),
-                  const SizedBox(height: 30),
-
-                  // ============ PROFIT & LOSS ACCOUNT ============
-                  _buildSectionHeader('PROFIT & LOSS ACCOUNT', backgroundColor: const Color(0xFF2C5545)),
-                  const SizedBox(height: 12),
-
-                  // Debit Side (Indirect Expenses)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 8, left: 8),
-                          child: Text(
-                            'Debit (Dr.)',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red,
-                            ),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        // Gross Loss (if any)
-                        if (grossProfit < 0) ...[
-                          const SizedBox(height: 8),
-                          _buildAccountItem('Gross Loss b/d', grossProfit.abs(), isSubtotal: true),
-                        ],
-                        // Indirect Expenses
-                        if (indirectExpenses.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Text(
-                              'Indirect Expenses:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF2C5545),
-                              ),
-                            ),
-                          ),
-                          ...indirectExpenses.map((item) => _buildAccountItem(
-                                '  ${item['name']}',
-                                item['balance'] as double,
-                              )),
-                          if (indirectExpenses.length > 1)
-                            _buildAccountItem('Total Indirect Expenses', totalIndirectExpenses, isSubtotal: true),
-                        ],
-                        if (grossProfit >= 0 && indirectExpenses.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Text(
-                              'No indirect expenses for this period',
-                              style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Credit Side (Indirect Income + Gross Profit)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.green.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 8, left: 8),
-                          child: Text(
-                            'Credit (Cr.)',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                            ),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        // Gross Profit (if any)
-                        if (grossProfit > 0) ...[
-                          const SizedBox(height: 8),
-                          _buildAccountItem('Gross Profit c/d', grossProfit, isSubtotal: true),
-                        ],
-                        // Indirect Income
-                        if (indirectIncome.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Text(
-                              'Indirect Income:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF2C5545),
-                              ),
-                            ),
-                          ),
-                          ...indirectIncome.map((item) => _buildAccountItem(
-                                '  ${item['name']}',
-                                item['balance'] as double,
-                              )),
-                          if (indirectIncome.length > 1)
-                            _buildAccountItem('Total Indirect Income', totalIndirectIncome, isSubtotal: true),
-                        ],
-                        if (grossProfit <= 0 && indirectIncome.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Text(
-                              'No indirect income for this period',
-                              style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Net Profit/Loss
-                  _buildTotalRow(
-                    netProfit >= 0 ? 'Net Profit' : 'Net Loss',
-                    netProfit.abs(),
-                    backgroundColor: netProfit >= 0 ? Colors.green.shade100 : Colors.red.shade100,
-                    textColor: netProfit >= 0 ? Colors.green.shade900 : Colors.red.shade900,
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Summary Section
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [const Color(0xFF2C5545), const Color(0xFF4C7380)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'SUMMARY',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        const Divider(color: Colors.white, thickness: 1),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Gross Profit:',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                            ),
-                            Text(
-                              grossProfit >= 0
-                                  ? '+₹${grossProfit.toStringAsFixed(2)}'
-                                  : '-₹${grossProfit.abs().toStringAsFixed(2)}',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: grossProfit >= 0 ? Colors.lightGreenAccent : Colors.redAccent,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Net Profit:',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                            Text(
-                              netProfit >= 0
-                                  ? '+₹${netProfit.toStringAsFixed(2)}'
-                                  : '-₹${netProfit.abs().toStringAsFixed(2)}',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: netProfit >= 0 ? Colors.lightGreenAccent : Colors.redAccent,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:accounting_app/services/period_service.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
 import 'package:accounting_app/ui/widgets/report_view_toggle.dart';
+import 'package:accounting_app/ui/widgets/t_format_table.dart';
 import 'package:provider/provider.dart';
 
 class BalanceSheet extends StatefulWidget {
@@ -30,7 +31,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
   // Net Profit/Loss
   double netProfit = 0;
   ReportViewMode viewMode = ReportViewMode.condensed;
-  final Set<String> expandedGroups = <String>{};
+  StatementFormat statementFormat = StatementFormat.tFormat;
 
   @override
   void initState() {
@@ -179,283 +180,171 @@ class _BalanceSheetState extends State<BalanceSheet> {
     return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 
-  Widget _buildSectionHeader(String title, {required Color color}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-        ),
-        textAlign: TextAlign.center,
-      ),
-    );
+  // --- Row building -------------------------------------------------
+
+  double _sum(List<Map<String, dynamic>> items) =>
+      items.fold(0.0, (sum, item) => sum + (item['balance'] as double));
+
+  /// Rows for one side of the T-format sheet: a line per category with
+  /// its ledgers underneath when the detailed view is selected.
+  List<StatementRow> _sideRows(Map<String, List<Map<String, dynamic>>> data) {
+    final rows = <StatementRow>[];
+    for (final entry in data.entries) {
+      if (entry.value.isEmpty) continue;
+      rows.add(StatementRow(entry.key, _sum(entry.value), isGroup: true));
+      if (viewMode == ReportViewMode.detailed) {
+        for (final item in entry.value) {
+          rows.add(StatementRow(
+            item['name'] as String,
+            item['balance'] as double,
+            isIndented: true,
+          ));
+        }
+      }
+    }
+    return rows;
   }
 
-  Widget _buildCategoryHeader(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 12, bottom: 6, left: 8),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.bold,
-          color: Color(0xFF2C5545),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAccountItem(String name, double amount, {bool isIndented = false}) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: isIndented ? 24 : 16,
-        vertical: 4,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Text(
-              name,
-              style: const TextStyle(
-                fontSize: 14,
-                color: Color(0xFF2C5545),
-              ),
-            ),
-          ),
-          Text(
-            amount.toStringAsFixed(2),
-            style: const TextStyle(
-              fontSize: 14,
-              color: Color(0xFF2C5545),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSubtotalRow(String label, double amount) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF2C5545),
-            ),
-          ),
-          Text(
-            amount.toStringAsFixed(2),
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF2C5545),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTotalRow(String label, double amount, Color backgroundColor) {
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          Text(
-            amount.toStringAsFixed(2),
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAssetsSection() {
-    return _buildGroupedSection(
-      sectionKey: 'assets',
-      data: assetsData,
-      borderColor: Colors.blue.shade200,
-      emptyMessage: 'No assets for this period',
-    );
-  }
-
-  Widget _buildLiabilitiesSection() {
-    return _buildGroupedSection(
-      sectionKey: 'liabilities',
-      data: liabilitiesData,
-      borderColor: Colors.orange.shade200,
-      emptyMessage: 'No liabilities for this period',
-    );
-  }
-
-  Widget _buildGroupedSection({
-    required String sectionKey,
-    required Map<String, List<Map<String, dynamic>>> data,
-    required Color borderColor,
-    required String emptyMessage,
-  }) {
-    final populatedGroups = data.entries
-        .where((entry) => entry.value.isNotEmpty)
+  /// Every ledger on a side, keyed by its underlying group, so the
+  /// Schedule III layout can regroup them.
+  List<Map<String, dynamic>> _itemsInGroups(
+    Map<String, List<Map<String, dynamic>>> data,
+    List<String> groups,
+  ) {
+    return data.values
+        .expand((items) => items)
+        .where((item) => groups.contains(item['group'] as String? ?? ''))
         .toList();
+  }
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: borderColor, width: 2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (populatedGroups.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                emptyMessage,
-                style: const TextStyle(
-                  color: Colors.grey,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-          ...populatedGroups.expand((entry) {
-            final groupTotal = entry.value.fold<double>(
-              0,
-              (sum, item) => sum + (item['balance'] as double),
-            );
-            final expansionKey = '$sectionKey:${entry.key}';
-            final isExpanded = expandedGroups.contains(expansionKey);
+  List<StatementRow> _scheduleRows(
+    Map<String, List<Map<String, dynamic>>> data,
+    String label,
+    List<String> groups,
+  ) {
+    final items = _itemsInGroups(data, groups);
+    if (items.isEmpty) return const [];
+    final rows = <StatementRow>[
+      StatementRow(label, _sum(items), isIndented: true),
+    ];
+    if (viewMode == ReportViewMode.detailed) {
+      for (final item in items) {
+        rows.add(StatementRow(
+          '   ${item['name']}',
+          item['balance'] as double,
+          isIndented: true,
+        ));
+      }
+    }
+    return rows;
+  }
 
-            if (viewMode == ReportViewMode.condensed) {
-              return <Widget>[
-                _buildExpandableGroupRow(
-                  entry.key,
-                  groupTotal,
-                  isExpanded: isExpanded,
-                  onToggle: () {
-                    setState(() {
-                      if (isExpanded) {
-                        expandedGroups.remove(expansionKey);
-                      } else {
-                        expandedGroups.add(expansionKey);
-                      }
-                    });
-                  },
-                ),
-                if (isExpanded)
-                  ...entry.value.map(
-                    (item) => _buildAccountItem(
-                      item['name'] as String,
-                      item['balance'] as double,
-                      isIndented: true,
-                    ),
-                  ),
-              ];
-            }
+  /// Prefixes a heading to [rows], or drops the heading when empty.
+  List<StatementRow> _headed(String heading, List<StatementRow> rows) {
+    if (rows.isEmpty) return const [];
+    return [StatementRow(heading, null, isGroup: true), ...rows];
+  }
 
-            return <Widget>[
-              _buildCategoryHeader(entry.key),
-              ...entry.value.map(
-                (item) => _buildAccountItem(
-                  item['name'] as String,
-                  item['balance'] as double,
-                  isIndented: true,
-                ),
-              ),
-              _buildSubtotalRow('Total ${entry.key}', groupTotal),
-            ];
-          }),
-        ],
-      ),
+  // --- Views --------------------------------------------------------
+
+  Widget _buildTFormat() {
+    final liabilityRows = _sideRows(liabilitiesData);
+    if (netProfit != 0) {
+      liabilityRows.add(StatementRow(
+        netProfit >= 0 ? 'Profit & Loss A/c (Net Profit)' : 'Profit & Loss A/c (Net Loss)',
+        netProfit,
+        isGroup: true,
+      ));
+    }
+    return TFormatTable(
+      leftRows: liabilityRows,
+      rightRows: _sideRows(assetsData),
+      leftTotal: totalLiabilities + netProfit,
+      rightTotal: totalAssets,
     );
   }
 
-  Widget _buildExpandableGroupRow(
-    String label,
-    double amount, {
-    required bool isExpanded,
-    required VoidCallback onToggle,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: isExpanded ? 'Collapse group' : 'Expand group',
-            icon: Icon(
-              isExpanded
-                  ? Icons.keyboard_arrow_down
-                  : Icons.keyboard_arrow_right,
-              color: const Color(0xFF2C5545),
-            ),
-            onPressed: onToggle,
+  Widget _buildScheduleIII() {
+    // Equity & liabilities. Headings only appear when they have content.
+    final shareholderRows = <StatementRow>[
+      ..._headed('Shareholders\' funds', [
+        ..._scheduleRows(
+            liabilitiesData, '(a) Share capital', ['Capital Account']),
+        ..._scheduleRows(
+            liabilitiesData, '(b) Reserves and surplus', ['Reserves & Surplus']),
+        if (netProfit != 0)
+          StatementRow(
+            netProfit >= 0
+                ? '(c) Surplus — profit for the period'
+                : '(c) Deficit — loss for the period',
+            netProfit,
+            isIndented: true,
           ),
-          Expanded(
-            child: InkWell(
-              onTap: onToggle,
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF2C5545),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            amount.toStringAsFixed(2),
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF2C5545),
-            ),
-          ),
-          const SizedBox(width: 16),
-        ],
-      ),
+      ]),
+      ..._headed('Non-current liabilities', [
+        ..._scheduleRows(liabilitiesData, '(a) Long-term borrowings', [
+          'Loans (Liability)',
+          'Secured Loans',
+          'Unsecured Loans',
+        ]),
+      ]),
+      ..._headed('Current liabilities', [
+        ..._scheduleRows(
+            liabilitiesData, '(a) Short-term borrowings', ['Bank OD A/c']),
+        ..._scheduleRows(
+            liabilitiesData, '(b) Trade payables', ['Sundry Creditors']),
+        ..._scheduleRows(liabilitiesData, '(c) Other current liabilities', [
+          'Current Liabilities',
+          'Duties & Taxes',
+          'Provisions',
+        ]),
+      ]),
+    ];
+
+    final assetRows = <StatementRow>[
+      ..._headed('Non-current assets', [
+        ..._scheduleRows(
+            assetsData, '(a) Property, plant and equipment', ['Fixed Assets']),
+        ..._scheduleRows(
+            assetsData, '(b) Non-current investments', ['Investments']),
+        ..._scheduleRows(assetsData, '(c) Other non-current assets',
+            ['Misc. Expenses (ASSET)']),
+      ]),
+      ..._headed('Current assets', [
+        ..._scheduleRows(assetsData, '(a) Inventories', ['Stock-in-hand']),
+        ..._scheduleRows(assetsData, '(b) Trade receivables', ['Sundry Debtors']),
+        ..._scheduleRows(assetsData, '(c) Cash and cash equivalents', [
+          'Cash-in-hand',
+          'Bank Accounts',
+        ]),
+        ..._scheduleRows(assetsData, '(d) Short-term loans and advances', [
+          'Loans & Advances (Asset)',
+          'Deposits (Assets)',
+        ]),
+      ]),
+    ];
+
+    return Column(
+      children: [
+        ScheduleIIISection(
+          title: 'I. EQUITY AND LIABILITIES',
+          rows: shareholderRows,
+          total: totalLiabilities + netProfit,
+          totalLabel: 'TOTAL',
+        ),
+        ScheduleIIISection(
+          title: 'II. ASSETS',
+          rows: assetRows,
+          total: totalAssets,
+          totalLabel: 'TOTAL',
+        ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final totalLiabilitiesWithProfit = totalLiabilities + (netProfit >= 0 ? netProfit : 0);
+    final totalLiabilitiesWithProfit = totalLiabilities + netProfit;
     final difference = (totalAssets - totalLiabilitiesWithProfit).abs();
     final isBalanced = difference < 0.01;
 
@@ -463,6 +352,8 @@ class _BalanceSheetState extends State<BalanceSheet> {
       backgroundColor: const Color(0xFFE0F2E9),
       appBar: AppBar(
         elevation: 0,
+        backgroundColor: kStatementGreen,
+        iconTheme: const IconThemeData(color: Colors.white),
         title: const Text(
           'Balance Sheet',
           style: TextStyle(
@@ -471,127 +362,83 @@ class _BalanceSheetState extends State<BalanceSheet> {
             color: Colors.white,
           ),
         ),
-        backgroundColor: const Color(0xFF2C5545),
         actions: [
           IconButton(
             icon: const Icon(Icons.calendar_today, color: Colors.white),
+            tooltip: 'Select Period',
             onPressed: _showDateRangeDialog,
-            tooltip: 'Select Date Range',
           ),
         ],
       ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Period display
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF2C5545), width: 2),
+          : Column(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  color: const Color(0xFFE0F2E9),
+                  child: Text(
+                    'As on: ${_formatDate(endDate)}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: kStatementGreen,
                     ),
+                  ),
+                ),
+                StatementFormatToggle(
+                  format: statementFormat,
+                  onChanged: (value) =>
+                      setState(() => statementFormat = value),
+                ),
+                ReportViewToggle(
+                  mode: viewMode,
+                  onChanged: (mode) => setState(() => viewMode = mode),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
                     child: Column(
                       children: [
-                        Text(
-                          'As on: ${_formatDate(endDate)}',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF2C5545),
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        if (!isBalanced)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.red[100],
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'Difference: ₹${difference.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red[900],
-                                ),
-                              ),
+                        if (statementFormat == StatementFormat.tFormat)
+                          _buildTFormat()
+                        else
+                          _buildScheduleIII(),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 10, horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: isBalanced
+                                ? const Color(0xFFD5EADF)
+                                : Colors.red.shade100,
+                            border: Border.all(
+                              color: isBalanced
+                                  ? kStatementGreen
+                                  : Colors.red.shade700,
                             ),
                           ),
+                          child: Text(
+                            isBalanced
+                                ? 'Balanced — both sides agree at ${TFormatTable.formatAmount(totalAssets)}'
+                                : 'Out of balance by ${TFormatTable.formatAmount(difference)}',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: isBalanced
+                                  ? kStatementGreen
+                                  : Colors.red.shade900,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  ReportViewToggle(
-                    mode: viewMode,
-                    onChanged: (mode) => setState(() => viewMode = mode),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // ASSETS SECTION
-                  _buildSectionHeader('ASSETS', color: Colors.blue.shade700),
-                  const SizedBox(height: 12),
-                  _buildAssetsSection(),
-                  _buildTotalRow('Total Assets', totalAssets, Colors.blue.shade700),
-                  const SizedBox(height: 30),
-
-                  // LIABILITIES SECTION
-                  _buildSectionHeader('LIABILITIES & CAPITAL', color: Colors.orange.shade700),
-                  const SizedBox(height: 12),
-                  _buildLiabilitiesSection(),
-                  _buildTotalRow('Total Liabilities', totalLiabilities, Colors.orange.shade700),
-                  const SizedBox(height: 12),
-
-                  // Net Profit/Loss
-                  if (netProfit != 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: netProfit >= 0 ? Colors.green.shade100 : Colors.red.shade100,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: netProfit >= 0 ? Colors.green.shade700 : Colors.red.shade700,
-                          width: 2,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            netProfit >= 0 ? 'Add: Net Profit' : 'Less: Net Loss',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: netProfit >= 0 ? Colors.green.shade900 : Colors.red.shade900,
-                            ),
-                          ),
-                          Text(
-                            netProfit.abs().toStringAsFixed(2),
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: netProfit >= 0 ? Colors.green.shade900 : Colors.red.shade900,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  const SizedBox(height: 12),
-                  _buildTotalRow(
-                    'Total Liabilities + Capital',
-                    totalLiabilitiesWithProfit,
-                    Colors.orange.shade700,
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
     );
   }

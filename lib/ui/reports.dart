@@ -7,7 +7,7 @@ import 'package:accounting_app/ui/group_summary.dart';
 import 'package:accounting_app/ui/ledger_list.dart';
 import 'package:accounting_app/ui/list_of_accounts.dart';
 import 'package:accounting_app/ui/registers.dart';
-import 'package:accounting_app/final_reports.dart';
+import 'package:accounting_app/ui/final_reports.dart';
 import 'package:accounting_app/trial_balance.dart';
 import 'package:accounting_app/services/period_service.dart'; // Added
 import 'package:accounting_app/ui/widgets/date_range_selector.dart'; // Added

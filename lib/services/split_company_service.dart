@@ -15,15 +15,6 @@ import 'package:accounting_app/services/financial_statement_service.dart';
 ///   company (including GST invoice details and inventory lines).
 /// The original company is left untouched.
 class SplitCompanyService {
-  static const List<String> _plGroups = [
-    ...FinancialStatementService.purchaseGroups,
-    ...FinancialStatementService.directExpenseGroups,
-    ...FinancialStatementService.salesGroups,
-    ...FinancialStatementService.directIncomeGroups,
-    ...FinancialStatementService.indirectExpenseGroups,
-    ...FinancialStatementService.indirectIncomeGroups,
-  ];
-
   /// Returns the id of the newly created company.
   static Future<int> splitCompany({
     required int companyId,
@@ -87,7 +78,7 @@ class SplitCompanyService {
             (isDebit ? naturalOpening : -naturalOpening) + preSplit;
 
         double newOpening;
-        if (_plGroups.contains(classification)) {
+        if (FinancialStatementService.isProfitAndLossGroup(classification)) {
           plNet += closing;
           newOpening = 0.0;
         } else {

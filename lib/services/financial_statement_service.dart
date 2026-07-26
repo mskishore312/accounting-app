@@ -57,6 +57,17 @@ class FinancialStatementService {
   }
 
   /// Determines if a ledger group has a credit nature by default
+  /// Groups whose balances belong to the Trading / Profit & Loss account
+  /// rather than the Balance Sheet.
+  static bool isProfitAndLossGroup(String classification) {
+    return purchaseGroups.contains(classification) ||
+        directExpenseGroups.contains(classification) ||
+        salesGroups.contains(classification) ||
+        directIncomeGroups.contains(classification) ||
+        indirectExpenseGroups.contains(classification) ||
+        indirectIncomeGroups.contains(classification);
+  }
+
   static bool isCreditNature(String classification) {
     return capitalGroups.contains(classification) ||
         loanLiabilityGroups.contains(classification) ||
@@ -97,56 +108,31 @@ class FinancialStatementService {
           '${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}';
     }
 
-    // Determine if we should use user-provided opening balance
-    bool useUserProvidedBalance = false;
-    if (booksBeginningDate != null && startDateStr != null) {
-      if (startDateStr == booksBeginningDate) {
-        useUserProvidedBalance = true;
-      }
-    }
+    // Balance-sheet ledgers carry forward: their closing balance is the
+    // opening balance at books beginning plus every movement up to the
+    // period end. Profit & loss ledgers restart each period, so only
+    // movements inside [start, end] count.
+    final isPeriodOnly = isProfitAndLossGroup(classification);
 
-    double balance = 0.0;
+    double balance = isPeriodOnly
+        ? 0.0
+        : (isDebitNature(classification)
+            ? userOpeningBalance
+            : -userOpeningBalance);
 
-    // Start with user-provided balance if applicable
-    if (useUserProvidedBalance) {
-      // Apply sign based on nature of the account
-      balance = isDebitNature(classification)
-          ? userOpeningBalance
-          : -userOpeningBalance;
-    }
-
-    // Process all entries
     for (var entry in report) {
       final entryDate = entry['voucher_date'] as String? ?? '';
       if (entryDate.isEmpty) continue;
 
-      final debit = (entry['debit'] as num?)?.toDouble() ?? 0.0;
-      final credit = (entry['credit'] as num?)?.toDouble() ?? 0.0;
-
-      // If not using user balance, accumulate everything before start date
-      if (!useUserProvidedBalance &&
-          startDateStr != null &&
-          entryDate.compareTo(startDateStr) < 0) {
-        balance += debit - credit;
-        continue;
-      }
-
-      // Skip entries before start date if using user balance
-      if (useUserProvidedBalance &&
+      if (endDateStr != null && entryDate.compareTo(endDateStr) > 0) continue;
+      if (isPeriodOnly &&
           startDateStr != null &&
           entryDate.compareTo(startDateStr) < 0) {
         continue;
       }
 
-      // Skip entries after end date
-      if (endDateStr != null && entryDate.compareTo(endDateStr) > 0) {
-        continue;
-      }
-
-      // Include in the period
-      if (startDateStr == null || entryDate.compareTo(startDateStr) >= 0) {
-        balance += debit - credit;
-      }
+      balance += ((entry['debit'] as num?)?.toDouble() ?? 0.0) -
+          ((entry['credit'] as num?)?.toDouble() ?? 0.0);
     }
 
     return balance;
@@ -267,9 +253,11 @@ class FinancialStatementService {
 
       if (balance == 0) continue;
 
+      // Debit-signed: a credit balance in an asset group shows negative
+      // so group totals and the balance sheet still net correctly.
       final ledgerData = {
         'name': ledger['name'],
-        'balance': balance.abs(),
+        'balance': balance,
         'group': classification,
       };
 
@@ -315,9 +303,11 @@ class FinancialStatementService {
 
       if (balance == 0) continue;
 
+      // Credit-signed: a debit balance in a liability group (e.g. Input
+      // GST under Duties & Taxes) shows negative so the sheet balances.
       final ledgerData = {
         'name': ledger['name'],
-        'balance': balance.abs(),
+        'balance': -balance,
         'group': classification,
       };
 
@@ -386,8 +376,43 @@ class FinancialStatementService {
       }
     }
 
-    final totalDebit = purchases + directExpenses;
-    final totalCredit = sales + directIncome;
+    // Opening stock (valuation as on the day before the period starts)
+    // goes to the debit side; closing stock (valuation as on the period
+    // end) to the credit side — Tally-style trading account.
+    double openingStock = 0;
+    double closingStock = 0;
+    final openingStockList = <Map<String, dynamic>>[];
+    final closingStockList = <Map<String, dynamic>>[];
+    for (var ledger in ledgers) {
+      final classification = ledger['classification'] as String? ?? '';
+      if (classification != 'Stock-in-hand') continue;
+      final ledgerId = ledger['id'] as int;
+      final closing = await getStockBalanceForDate(ledgerId, endDate);
+      double opening = 0;
+      if (startDate != null) {
+        opening = await getStockBalanceForDate(
+            ledgerId, startDate.subtract(const Duration(days: 1)));
+      }
+      if (opening != 0) {
+        openingStock += opening;
+        openingStockList.add({
+          'name': ledger['name'],
+          'balance': opening,
+          'group': 'Opening Stock',
+        });
+      }
+      if (closing != 0) {
+        closingStock += closing;
+        closingStockList.add({
+          'name': ledger['name'],
+          'balance': closing,
+          'group': 'Closing Stock',
+        });
+      }
+    }
+
+    final totalDebit = purchases + directExpenses + openingStock;
+    final totalCredit = sales + directIncome + closingStock;
     final grossProfit = totalCredit - totalDebit;
 
     return {
@@ -395,10 +420,14 @@ class FinancialStatementService {
       'directExpenses': directExpensesList,
       'sales': salesList,
       'directIncome': directIncomeList,
+      'openingStockList': openingStockList,
+      'closingStockList': closingStockList,
       'totalPurchases': purchases,
       'totalDirectExpenses': directExpenses,
       'totalSales': sales,
       'totalDirectIncome': directIncome,
+      'openingStock': openingStock,
+      'closingStock': closingStock,
       'totalDebit': totalDebit,
       'totalCredit': totalCredit,
       'grossProfit': grossProfit,

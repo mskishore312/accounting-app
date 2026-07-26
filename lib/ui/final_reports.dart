@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/ui/balance_sheet.dart';
-import 'package:accounting_app/ui/profit_and_loss.dart';
+import 'package:accounting_app/ui/trading_and_pl.dart';
 
 class FinalReports extends StatelessWidget {
   final String companyName;
@@ -43,7 +43,7 @@ class FinalReports extends StatelessWidget {
               () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ProfitAndLoss(),
+                  builder: (context) => const TradingAndPL(),
                 ),
               ),
             ),
