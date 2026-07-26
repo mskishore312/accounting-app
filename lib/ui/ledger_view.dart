@@ -654,6 +654,7 @@ class _LedgerViewState extends State<LedgerView> {
                     const Text('Type of Info', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       value: _searchTypeOfInfo,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
@@ -721,6 +722,7 @@ class _LedgerViewState extends State<LedgerView> {
                       const Text('Having', style: TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _searchHaving,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
@@ -755,6 +757,7 @@ class _LedgerViewState extends State<LedgerView> {
                       const Text('Select Voucher Type', style: TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _searchVoucherType,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
@@ -779,6 +782,7 @@ class _LedgerViewState extends State<LedgerView> {
                       const Text('Mode', style: TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _searchAmountMode,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),

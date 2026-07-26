@@ -616,11 +616,14 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Text(
-                                        _formatDate(_selectedDate),
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          color: Color(0xFF2C5545),
+                                      Flexible(
+                                        child: Text(
+                                          _formatDate(_selectedDate),
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            color: Color(0xFF2C5545),
+                                          ),
                                         ),
                                       ),
                                       const Icon(
@@ -643,15 +646,17 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                     // Debit Section
                     Row(
                       children: [
-                        const Text(
-                          'Debit (Cash/Bank Accounts)',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF2C5545),
+                        const Expanded(
+                          child: Text(
+                            'Debit (Cash/Bank Accounts)',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF2C5545),
+                            ),
                           ),
                         ),
-                        const Spacer(),
                         IconButton(
                           onPressed: _addDebitEntry,
                           icon: const Icon(
@@ -696,6 +701,7 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                                 Expanded(
                                   flex: 3,
                                   child: DropdownButtonFormField<String>(
+   isExpanded: true,
                                     value: _debitEntries[index].selectedLedgerId,
                                     decoration: const InputDecoration(
                                       labelText: 'Ledger',
@@ -882,6 +888,7 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                                 Expanded(
                                   flex: 3,
                                   child: DropdownButtonFormField<String>(
+   isExpanded: true,
                                     value: _creditEntries[index].selectedLedgerId,
                                     decoration: const InputDecoration(
                                       labelText: 'Ledger',

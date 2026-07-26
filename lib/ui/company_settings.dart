@@ -205,14 +205,15 @@ class _CompanySettingsState extends State<CompanySettings> {
               ),
             ),
             const SizedBox(width: 8),
-            const Text(
+            Flexible(child: const Text(
               'TOM-PA (V 4.5, R 73)',
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
-            ),
+            )),
           ],
         ),
       ),

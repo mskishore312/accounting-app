@@ -152,14 +152,15 @@ class _NewCompanyState extends State<NewCompany> {
               ),
             ),
             const SizedBox(width: 8),
-            const Text(
+            Flexible(child: const Text(
               'TOM-PA (V 4.5, R 73)',
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
-            ),
+            )),
           ],
         ),
       ),
@@ -231,6 +232,7 @@ class _NewCompanyState extends State<NewCompany> {
                       _buildFormField(
                         label: 'State :',
                         child: DropdownButtonFormField<String>(
+   isExpanded: true,
                           value: _selectedState,
                           decoration: _buildInputDecoration(''),
                           items: _states

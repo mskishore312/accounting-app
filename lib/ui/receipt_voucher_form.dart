@@ -296,6 +296,7 @@ class _ReceiptVoucherFormState extends State<ReceiptVoucherForm> {
                                         Expanded(
                                           flex: 3,
                                           child: DropdownButtonFormField<String>(
+   isExpanded: true,
                                             value: _selectedLedgers[index],
                                             decoration: _buildInputDecoration('Receipt from'),
                                             items: _ledgers

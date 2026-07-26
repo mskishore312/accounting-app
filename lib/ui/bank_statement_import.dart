@@ -300,8 +300,8 @@ class _BankStatementImportState extends State<BankStatementImport> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       DropdownButtonFormField<int>(
-                        value: bankLedgerId,
                         isExpanded: true,
+                        value: bankLedgerId,
                         decoration: const InputDecoration(
                           labelText: 'Bank ledger',
                           border: OutlineInputBorder(),
@@ -431,6 +431,7 @@ class _BankStatementImportState extends State<BankStatementImport> {
                                     const SizedBox(height: 8),
                                     DropdownButtonFormField<
                                         BankTransactionDirection>(
+                                      isExpanded: true,
                                       value: item.direction,
                                       decoration: const InputDecoration(
                                         labelText: 'Bank movement',

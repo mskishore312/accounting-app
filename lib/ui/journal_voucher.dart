@@ -446,12 +446,15 @@ class _JournalVoucherState extends State<JournalVoucher> {
               ),
             ),
             const SizedBox(width: 8),
-            const Text(
+            const Flexible(
+              child: Text(
               'TOM-PA (V 4.5, R 73)',
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
+              ),
               ),
             ),
           ],
@@ -568,12 +571,15 @@ class _JournalVoucherState extends State<JournalVoucher> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text(
-                                'Dr/By (Debit):',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF2C5545),
+                              const Expanded(
+                                child: Text(
+                                  'Dr/By (Debit):',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2C5545),
+                                  ),
                                 ),
                               ),
                               IconButton(
@@ -594,6 +600,7 @@ class _JournalVoucherState extends State<JournalVoucher> {
                                     flex: 3,
                                     child: DropdownButtonFormField<String>(
                                       value: debitEntries[index].selectedLedger,
+                                      isExpanded: true,
                                       decoration: const InputDecoration(
                                         border: UnderlineInputBorder(),
                                         contentPadding: EdgeInsets.symmetric(vertical: 8),
@@ -603,7 +610,10 @@ class _JournalVoucherState extends State<JournalVoucher> {
                                         ...allLedgers.map((ledger) {
                                           return DropdownMenuItem(
                                             value: ledger['name'] as String,
-                                            child: Text(ledger['name'] as String),
+                                            child: Text(
+                                              ledger['name'] as String,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
                                           );
                                         }).toList(),
                                         const DropdownMenuItem(
@@ -733,12 +743,15 @@ class _JournalVoucherState extends State<JournalVoucher> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text(
-                                'Cr/To (Credit):',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF2C5545),
+                              const Expanded(
+                                child: Text(
+                                  'Cr/To (Credit):',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2C5545),
+                                  ),
                                 ),
                               ),
                               IconButton(
@@ -759,6 +772,7 @@ class _JournalVoucherState extends State<JournalVoucher> {
                                     flex: 3,
                                     child: DropdownButtonFormField<String>(
                                       value: creditEntries[index].selectedLedger,
+                                      isExpanded: true,
                                       decoration: const InputDecoration(
                                         border: UnderlineInputBorder(),
                                         contentPadding: EdgeInsets.symmetric(vertical: 8),
@@ -768,7 +782,10 @@ class _JournalVoucherState extends State<JournalVoucher> {
                                         ...allLedgers.map((ledger) {
                                           return DropdownMenuItem(
                                             value: ledger['name'] as String,
-                                            child: Text(ledger['name'] as String),
+                                            child: Text(
+                                              ledger['name'] as String,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
                                           );
                                         }).toList(),
                                         const DropdownMenuItem(

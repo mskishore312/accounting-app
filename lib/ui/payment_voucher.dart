@@ -612,11 +612,14 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Text(
-                                        _formatDate(_selectedDate),
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          color: Color(0xFF2C5545),
+                                      Flexible(
+                                        child: Text(
+                                          _formatDate(_selectedDate),
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            color: Color(0xFF2C5545),
+                                          ),
                                         ),
                                       ),
                                       const Icon(
@@ -639,15 +642,17 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                     // Debit Section (Other Ledgers)
                     Row(
                       children: [
-                        const Text(
-                          'Debit (Other Accounts)',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF2C5545),
+                        const Expanded(
+                          child: Text(
+                            'Debit (Other Accounts)',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF2C5545),
+                            ),
                           ),
                         ),
-                        const Spacer(),
                         IconButton(
                           onPressed: _addDebitEntry,
                           icon: const Icon(
@@ -692,6 +697,7 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                                 Expanded(
                                   flex: 3,
                                   child: DropdownButtonFormField<String>(
+   isExpanded: true,
                                     value: _debitEntries[index].selectedLedgerId,
                                     decoration: const InputDecoration(
                                       labelText: 'Payment for',
@@ -814,15 +820,17 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                     // Credit Section (Cash/Bank)
                     Row(
                       children: [
-                        const Text(
-                          'Credit (Cash/Bank Accounts)',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF2C5545),
+                        const Expanded(
+                          child: Text(
+                            'Credit (Cash/Bank Accounts)',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF2C5545),
+                            ),
                           ),
                         ),
-                        const Spacer(),
                         IconButton(
                           onPressed: _addCreditEntry,
                           icon: const Icon(
@@ -867,6 +875,7 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                                 Expanded(
                                   flex: 3,
                                   child: DropdownButtonFormField<String>(
+   isExpanded: true,
                                     value: _creditEntries[index].selectedLedgerId,
                                     decoration: const InputDecoration(
                                       labelText: 'Payment through',
@@ -1025,20 +1034,26 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'Total Debit: ${_totalDebit.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF2C5545),
+                          Flexible(
+                            child: Text(
+                              'Total Debit: ${_totalDebit.toStringAsFixed(2)}',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF2C5545),
+                              ),
                             ),
                           ),
-                          Text(
-                            'Total Credit: ${_totalCredit.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF2C5545),
+                          Flexible(
+                            child: Text(
+                              'Total Credit: ${_totalCredit.toStringAsFixed(2)}',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF2C5545),
+                              ),
                             ),
                           ),
                         ],
