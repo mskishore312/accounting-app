@@ -37,7 +37,7 @@ class StorageService {
     String path = join(dbPath, 'accounting_app.db');
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -92,6 +92,9 @@ class StorageService {
         classification TEXT,
         balance REAL DEFAULT 0,
         is_default INTEGER DEFAULT 0,
+        address TEXT,
+        contact TEXT,
+        gstin TEXT,
         FOREIGN KEY (company_id) REFERENCES Companies(id) ON DELETE CASCADE,
         FOREIGN KEY (account_master_id) REFERENCES AccountMasters(id) ON DELETE SET NULL
       )
@@ -224,6 +227,12 @@ class StorageService {
     }
     if (oldVersion < 7) {
       await _createInvoiceTables(db);
+    }
+    if (oldVersion < 8) {
+      // Contact details for the Address Book report
+      await db.execute('ALTER TABLE Ledgers ADD COLUMN address TEXT');
+      await db.execute('ALTER TABLE Ledgers ADD COLUMN contact TEXT');
+      await db.execute('ALTER TABLE Ledgers ADD COLUMN gstin TEXT');
     }
   }
 

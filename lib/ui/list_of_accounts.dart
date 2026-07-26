@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/services/financial_statement_service.dart';
 
 class ListOfAccounts extends StatefulWidget {
   const ListOfAccounts({Key? key}) : super(key: key);
@@ -52,11 +53,24 @@ class _ListOfAccountsState extends State<ListOfAccounts> {
     }
   }
 
+  String _formatBalance(Map<String, dynamic> account) {
+    final balance = (account['balance'] as num?)?.toDouble() ?? 0.0;
+    final classification = account['classification'] as String? ?? '';
+    // Opening balances are stored in the ledger's natural sign
+    final nature =
+        FinancialStatementService.isCreditNature(classification) ? 'Cr.' : 'Dr.';
+    if (balance < 0) {
+      // A negative natural balance means the opposite nature
+      return '${balance.abs().toStringAsFixed(2)} ${nature == 'Dr.' ? 'Cr.' : 'Dr.'}';
+    }
+    return '${balance.toStringAsFixed(2)} $nature';
+  }
+
   void _filterAccounts(String query) {
     setState(() {
       filteredAccounts = accounts.where((account) {
         return account['name'].toString().toLowerCase().contains(query.toLowerCase()) ||
-               account['under'].toString().toLowerCase().contains(query.toLowerCase());
+               (account['classification'] ?? '').toString().toLowerCase().contains(query.toLowerCase());
       }).toList();
     });
   }
@@ -253,12 +267,12 @@ class _ListOfAccountsState extends State<ListOfAccounts> {
                                               children: [
                                                 _buildCell((index + 1).toString(), 1),
                                                 _buildCell(account['name'], 3),
-                                                _buildCell(account['under'], 3),
                                                 _buildCell(
-                                                    '${account['opening_balance'] ?? '0.00'} ${account['balance_type'] ?? 'Dr.'}',
-                                                    2),
+                                                    account['classification'] ?? 'Primary',
+                                                    3),
+                                                _buildCell(_formatBalance(account), 2),
                                                 _buildCell(
-                                                    account['tin_gst_no'] ?? '-', 2),
+                                                    account['gstin'] ?? '-', 2),
                                               ],
                                             ),
                                           ),

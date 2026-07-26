@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/ui/address_book.dart';
+import 'package:accounting_app/ui/cash_bank_book.dart';
 import 'package:accounting_app/ui/daybook.dart';
+import 'package:accounting_app/ui/group_summary.dart';
 import 'package:accounting_app/ui/ledger_list.dart';
+import 'package:accounting_app/ui/list_of_accounts.dart';
+import 'package:accounting_app/ui/registers.dart';
 import 'package:accounting_app/final_reports.dart';
 import 'package:accounting_app/trial_balance.dart';
 import 'package:accounting_app/services/period_service.dart'; // Added
@@ -132,12 +137,6 @@ class _ReportsState extends State<Reports> { // Added State class
     );
   }
 
-  void _showComingSoon(BuildContext context, String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature coming soon')),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     // Listen to PeriodService changes for UI updates if needed, though AppBar might not auto-update
@@ -231,7 +230,12 @@ class _ReportsState extends State<Reports> { // Added State class
                   ),
                   _buildButton(
                     'Cash/Bank Book',
-                    onPressed: () => _showComingSoon(context, 'Cash/Bank Book'),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CashBankBook(),
+                      ),
+                    ),
                   ),
                   _buildButton(
                     'AI Bank Statement Import',
@@ -244,19 +248,39 @@ class _ReportsState extends State<Reports> { // Added State class
                   ),
                   _buildButton(
                     'Group Summary',
-                    onPressed: () => _showComingSoon(context, 'Group Summary'),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const GroupSummary(),
+                      ),
+                    ),
                   ),
                   _buildButton(
                     'Registers',
-                    onPressed: () => _showComingSoon(context, 'Registers'),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const Registers(),
+                      ),
+                    ),
                   ),
                   _buildButton(
                     'List Of Accounts',
-                    onPressed: () => _showComingSoon(context, 'List Of Accounts'),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ListOfAccounts(),
+                      ),
+                    ),
                   ),
                   _buildButton(
                     'Address Book',
-                    onPressed: () => _showComingSoon(context, 'Address Book'),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AddressBook(),
+                      ),
+                    ),
                   ),
                   _buildButton(
                     'Trial Balance',
