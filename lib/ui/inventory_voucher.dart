@@ -317,7 +317,8 @@ class _InventoryVoucherFormState extends State<InventoryVoucherForm> {
         child: Column(
           children: [
             DropdownButtonFormField<int>(
-              initialValue: line.item?['id'] as int?,
+              // ignore: deprecated_member_use
+              value: line.item?['id'] as int?,
               isExpanded: true,
               decoration: const InputDecoration(labelText: 'Item'),
               items: _items
