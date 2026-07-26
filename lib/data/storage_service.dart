@@ -150,6 +150,7 @@ class StorageService {
     ''');
 
     await _createInvoiceTables(db);
+    await _createStockJournalTable(db);
 
     // Create indexes
     await db.execute('CREATE INDEX idx_company_name ON Companies(name)');
@@ -233,7 +234,28 @@ class StorageService {
       await db.execute('ALTER TABLE Ledgers ADD COLUMN address TEXT');
       await db.execute('ALTER TABLE Ledgers ADD COLUMN contact TEXT');
       await db.execute('ALTER TABLE Ledgers ADD COLUMN gstin TEXT');
+      await _createStockJournalTable(db);
     }
+  }
+
+  static Future<void> _createStockJournalTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS StockJournal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        journal_date TEXT NOT NULL,
+        item_id INTEGER NOT NULL,
+        qty_in REAL NOT NULL DEFAULT 0,
+        qty_out REAL NOT NULL DEFAULT 0,
+        narration TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES Companies(id) ON DELETE CASCADE,
+        FOREIGN KEY (item_id) REFERENCES InventoryItems(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_stock_journal_date ON StockJournal(company_id, journal_date)',
+    );
   }
 
   static Future<void> _createInvoiceTables(DatabaseExecutor db) async {
@@ -835,6 +857,76 @@ class StorageService {
   static Future<int> deleteInventoryItem(int id) async {
     final db = await _instance.database;
     return db.delete('InventoryItems', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- Stock Journal (inventory voucher) operations ---
+
+  /// Save a stock journal: adjusts item quantities and records the movement.
+  /// [lines] entries: {item_id, qty_in, qty_out}
+  static Future<void> saveStockJournal({
+    required String journalDate,
+    required String narration,
+    required List<Map<String, dynamic>> lines,
+  }) async {
+    final company = await getSelectedCompany();
+    if (company == null) throw Exception('No company selected');
+    final companyId = company['id'] as int;
+    final db = await _instance.database;
+    await db.transaction((txn) async {
+      for (final line in lines) {
+        final itemId = line['item_id'] as int;
+        final qtyIn = (line['qty_in'] as num?)?.toDouble() ?? 0.0;
+        final qtyOut = (line['qty_out'] as num?)?.toDouble() ?? 0.0;
+        if (qtyIn == 0 && qtyOut == 0) continue;
+        await txn.insert('StockJournal', {
+          'company_id': companyId,
+          'journal_date': journalDate,
+          'item_id': itemId,
+          'qty_in': qtyIn,
+          'qty_out': qtyOut,
+          'narration': narration,
+        });
+        await txn.rawUpdate(
+          'UPDATE InventoryItems SET stock_qty = stock_qty + ? WHERE id = ?',
+          [qtyIn - qtyOut, itemId],
+        );
+      }
+    });
+  }
+
+  /// Stock journal entries, newest first, with item names.
+  static Future<List<Map<String, dynamic>>> getStockJournal(
+      [int? companyId]) async {
+    if (companyId == null) {
+      final comp = await getSelectedCompany();
+      companyId = comp?['id'] as int? ?? 0;
+    }
+    final db = await _instance.database;
+    return await db.rawQuery('''
+      SELECT sj.*, i.name AS item_name, i.unit AS item_unit
+      FROM StockJournal sj
+      JOIN InventoryItems i ON sj.item_id = i.id
+      WHERE sj.company_id = ?
+      ORDER BY sj.journal_date DESC, sj.id DESC
+    ''', [companyId]);
+  }
+
+  /// Delete a stock journal entry and undo its quantity adjustment.
+  static Future<void> deleteStockJournalEntry(int entryId) async {
+    final db = await _instance.database;
+    await db.transaction((txn) async {
+      final rows = await txn.query('StockJournal',
+          where: 'id = ?', whereArgs: [entryId], limit: 1);
+      if (rows.isEmpty) return;
+      final row = rows.first;
+      final qtyIn = (row['qty_in'] as num?)?.toDouble() ?? 0.0;
+      final qtyOut = (row['qty_out'] as num?)?.toDouble() ?? 0.0;
+      await txn.rawUpdate(
+        'UPDATE InventoryItems SET stock_qty = stock_qty - ? WHERE id = ?',
+        [qtyIn - qtyOut, row['item_id']],
+      );
+      await txn.delete('StockJournal', where: 'id = ?', whereArgs: [entryId]);
+    });
   }
 
   static Future<int> deleteInvoiceVoucher(int voucherId) async {

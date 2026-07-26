@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/accounting_vouchers.dart';
+import 'package:accounting_app/ui/inventory_voucher.dart';
 
 class Vouchers extends StatefulWidget {
   const Vouchers({Key? key}) : super(key: key);
@@ -153,11 +154,13 @@ class _VouchersState extends State<Vouchers> {
                         _buildButton(
                           'Inventory Voucher',
                           onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Inventory voucher coming soon'),
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    const InventoryVoucherList(),
                               ),
-                            );
+                            ).then((_) => _loadVouchers());
                           },
                         ),
                       ],
