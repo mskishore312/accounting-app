@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/ui/account_masters.dart';
 import 'package:accounting_app/ui/inventory_items.dart';
+import 'package:accounting_app/ui/tax_masters.dart';
 import 'package:accounting_app/data/storage_service.dart';
 
 class MasterOptions extends StatefulWidget {
@@ -14,6 +15,30 @@ class _MasterOptionsState extends State<MasterOptions> {
   bool _isLoading = true;
   String? _error;
   int accountMastersCount = 0;
+  int inventoryMastersCount = 0;
+  int taxMastersCount = 0;
+  int gstTaxMastersCount = 0;
+
+  static const List<String> _standardGstNames = [
+    'Output CGST',
+    'Output SGST',
+    'Output IGST',
+    'Input CGST',
+    'Input SGST',
+    'Input IGST',
+  ];
+
+  void _updateDerivedCounts(List<Map<String, dynamic>> ledgers,
+      List<Map<String, dynamic>> inventoryItems) {
+    taxMastersCount = ledgers
+        .where((l) =>
+            (l['classification'] as String? ?? '') == 'Duties & Taxes')
+        .length;
+    gstTaxMastersCount = ledgers
+        .where((l) => _standardGstNames.contains(l['name'] as String? ?? ''))
+        .length;
+    inventoryMastersCount = inventoryItems.length;
+  }
 
   @override
   void initState() {
@@ -73,17 +98,21 @@ class _MasterOptionsState extends State<MasterOptions> {
         
         // Reload ledgers to include the new Cash account
         final updatedLedgers = await StorageService.getLedgers();
-        
+        final inventoryItems = await StorageService.getInventoryItems();
+
         if (mounted) {
           setState(() {
             accountMastersCount = updatedLedgers.length;
+            _updateDerivedCounts(updatedLedgers, inventoryItems);
             _isLoading = false;
           });
         }
       } else {
+        final inventoryItems = await StorageService.getInventoryItems();
         if (mounted) {
           setState(() {
             accountMastersCount = ledgers.length;
+            _updateDerivedCounts(ledgers, inventoryItems);
             _isLoading = false;
           });
         }
@@ -203,36 +232,38 @@ class _MasterOptionsState extends State<MasterOptions> {
                             ),
                             _buildMasterButton(
                               context,
-                              'Inventory Masters (0)',
+                              'Inventory Masters ($inventoryMastersCount)',
                               () {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) => const InventoryItemsScreen(),
                                   ),
-                                );
+                                ).then((_) => _loadAccountMastersCount());
                               },
                             ),
                             _buildMasterButton(
                               context,
-                              'Tax Masters (0)',
+                              'Tax Masters ($taxMastersCount)',
                               () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Tax Masters coming soon'),
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const TaxMasters(),
                                   ),
-                                );
+                                ).then((_) => _loadAccountMastersCount());
                               },
                             ),
                             _buildMasterButton(
                               context,
-                              'GST Tax Masters (0)',
+                              'GST Tax Masters ($gstTaxMastersCount)',
                               () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('GST Tax Masters coming soon'),
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const GstTaxMasters(),
                                   ),
-                                );
+                                ).then((_) => _loadAccountMastersCount());
                               },
                             ),
                           ],
