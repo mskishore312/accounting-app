@@ -24,11 +24,13 @@ class _InventoryVoucherListState extends State<InventoryVoucherList> {
   Future<void> _load() async {
     try {
       final entries = await StorageService.getStockJournal();
+      if (!mounted) return;
       setState(() {
         _entries = entries;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -238,6 +240,7 @@ class _InventoryVoucherFormState extends State<InventoryVoucherForm> {
   Future<void> _loadItems() async {
     try {
       final items = await StorageService.getInventoryItems();
+      if (!mounted) return;
       setState(() => _items = items);
     } catch (e) {
       if (mounted) {
@@ -295,6 +298,7 @@ class _InventoryVoucherFormState extends State<InventoryVoucherForm> {
         Navigator.pop(context);
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() => _saving = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

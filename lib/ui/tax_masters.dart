@@ -26,11 +26,13 @@ class _TaxMastersState extends State<TaxMasters> {
           .where((l) => (l['classification'] as String? ?? '') == 'Duties & Taxes')
           .toList()
         ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+      if (!mounted) return;
       setState(() {
         _taxLedgers = taxLedgers;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -258,11 +260,13 @@ class _GstTaxMastersState extends State<GstTaxMasters> {
           existing[name] = ledger;
         }
       }
+      if (!mounted) return;
       setState(() {
         _existing = existing;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

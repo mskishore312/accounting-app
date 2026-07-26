@@ -52,11 +52,13 @@ class _GroupSummaryState extends State<GroupSummary> {
         };
       }).toList()
         ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+      if (!mounted) return;
       setState(() {
         _groups = groups;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

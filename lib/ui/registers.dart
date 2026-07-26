@@ -122,11 +122,13 @@ class _MonthlyRegisterState extends State<MonthlyRegister> {
       }).toList()
         ..sort(
             (a, b) => (a['month'] as String).compareTo(b['month'] as String));
+      if (!mounted) return;
       setState(() {
         _months = months;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

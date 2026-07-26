@@ -63,13 +63,15 @@ class _ReportsState extends State<Reports> { // Added State class
         }
       }
 
+      if (!mounted) return;
       setState(() {
         _booksStartingFromDate = parsedDate ?? DateTime(DateTime.now().year - 20, 1, 1); // Use existing fallback
       });
     } else {
-       setState(() {
+      if (!mounted) return;
+      setState(() {
         _booksStartingFromDate = DateTime(DateTime.now().year - 20, 1, 1); // Fallback if no company or books_from date
-       });
+      });
     }
   }
 

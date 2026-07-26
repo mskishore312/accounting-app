@@ -31,11 +31,13 @@ class _AddressBookState extends State<AddressBook> {
       final ledgers = await StorageService.getLedgers();
       ledgers.sort(
           (a, b) => (a['name'] as String).compareTo(b['name'] as String));
+      if (!mounted) return;
       setState(() {
         _ledgers = ledgers;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

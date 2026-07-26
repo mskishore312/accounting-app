@@ -74,11 +74,13 @@ class _AccountingVouchersState extends State<AccountingVouchers> {
         }
       }
       
+      if (!mounted) return;
       setState(() {
         vouchers = filteredVouchers;
         isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         isLoading = false;
       });

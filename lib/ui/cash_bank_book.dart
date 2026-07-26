@@ -55,11 +55,13 @@ class _CashBankBookState extends State<CashBankBook> {
         if (groupCompare != 0) return groupCompare;
         return (a['name'] as String).compareTo(b['name'] as String);
       });
+      if (!mounted) return;
       setState(() {
         _rows = rows;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

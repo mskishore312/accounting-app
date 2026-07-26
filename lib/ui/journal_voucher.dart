@@ -153,6 +153,7 @@ class _JournalVoucherState extends State<JournalVoucher> {
   Future<void> _loadNextVoucherNumber() async {
     try {
       final nextNumber = await StorageService.getNextVoucherNumber('Journal');
+      if (!mounted) return;
       setState(() {
         _voucherNumberController.text = nextNumber;
       });
@@ -182,7 +183,8 @@ class _JournalVoucherState extends State<JournalVoucher> {
     try {
       // Get all ledgers for the current company
       final loadedLedgers = await StorageService.getLedgers();
-      
+
+      if (!mounted) return;
       setState(() {
         allLedgers = loadedLedgers;
       });
