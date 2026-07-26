@@ -10,6 +10,8 @@ import 'package:accounting_app/ui/widgets/date_range_selector.dart';
 import 'package:provider/provider.dart';
 import 'package:accounting_app/services/period_service.dart';
 import 'package:accounting_app/services/pdf_service.dart';
+import 'package:accounting_app/services/excel_export_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class LedgerView extends StatefulWidget {
   final Map<String, dynamic> ledger;
@@ -1038,9 +1040,7 @@ class _LedgerViewState extends State<LedgerView> {
                 title: const Text('Export as Excel Sheet'),
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Coming soon')),
-                  );
+                  _exportCsvAndShare(asMail: false);
                 },
               ),
               ListTile(
@@ -1048,9 +1048,7 @@ class _LedgerViewState extends State<LedgerView> {
                 title: const Text('Export as Excel Sheet and Mail'),
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Coming soon')),
-                  );
+                  _exportCsvAndShare(asMail: true);
                 },
               ),
               ListTile(
@@ -1058,9 +1056,7 @@ class _LedgerViewState extends State<LedgerView> {
                 title: const Text('Send SMS'),
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Coming soon')),
-                  );
+                  _sendSummarySms();
                 },
               ),
               ListTile(
@@ -1178,6 +1174,96 @@ class _LedgerViewState extends State<LedgerView> {
   }
 
   // --- PDF Export and Share ---
+  Future<void> _exportCsvAndShare({required bool asMail}) async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+
+      final company = await StorageService.getSelectedCompany();
+      final companyName = company?['name'] as String? ?? 'Unknown Company';
+      final ledgerName = widget.ledger['name'] as String? ?? 'Unknown Ledger';
+      if (!mounted) return;
+      final periodService = Provider.of<PeriodService>(context, listen: false);
+      final periodText = periodService.periodText;
+
+      final entriesToExport =
+          _searchTypeOfInfo != null ? _filteredEntries : processedEntries;
+
+      final csvFile = await ExcelExportService.generateLedgerCsv(
+        companyName: companyName,
+        ledgerName: ledgerName,
+        periodText: periodText,
+        openingBalance: openingBalance.abs(),
+        isOpeningBalanceDebit: openingBalance >= 0,
+        entries: entriesToExport,
+        closingBalance: closingBalance.abs(),
+        isClosingBalanceDebit: closingBalance >= 0,
+        totalDebit: totalDebit,
+        totalCredit: totalCredit,
+        showNarration: _showNarration,
+      );
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      await ExcelExportService.shareCsv(csvFile, ledgerName, asMail: asMail);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(asMail
+                ? 'Excel sheet ready to share via email'
+                : 'Excel sheet exported'),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error exporting Excel sheet: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _sendSummarySms() async {
+    try {
+      final company = await StorageService.getSelectedCompany();
+      final companyName = company?['name'] as String? ?? 'Unknown Company';
+      final ledgerName = widget.ledger['name'] as String? ?? 'Unknown Ledger';
+      if (!mounted) return;
+      final periodService = Provider.of<PeriodService>(context, listen: false);
+
+      final body = '$companyName - $ledgerName (${periodService.periodText})\n'
+          'Opening: ${openingBalance.abs().toStringAsFixed(2)} ${openingBalance >= 0 ? 'Dr' : 'Cr'}\n'
+          'Debits: ${totalDebit.toStringAsFixed(2)}, Credits: ${totalCredit.toStringAsFixed(2)}\n'
+          'Closing: ${closingBalance.abs().toStringAsFixed(2)} ${closingBalance >= 0 ? 'Dr' : 'Cr'}';
+
+      final uri = Uri(
+        scheme: 'sms',
+        path: '',
+        queryParameters: {'body': body},
+      );
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No SMS app available on this device')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error preparing SMS: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _exportPdfAndShare(String shareType) async {
     try {
       setState(() {
