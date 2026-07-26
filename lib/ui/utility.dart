@@ -1,11 +1,226 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:accounting_app/data/storage_service.dart';
-import 'package:accounting_app/ui/gateway.dart';
+import 'package:accounting_app/services/backup_service.dart';
+import 'package:accounting_app/services/split_company_service.dart';
 import 'package:accounting_app/ui/company_settings_selection.dart';
 import 'package:accounting_app/ui/edit_company.dart';
 
 class Utility extends StatelessWidget {
   const Utility({Key? key}) : super(key: key);
+
+  void _showSnack(BuildContext context, String message, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? Colors.red : Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _runBackup(BuildContext context) async {
+    try {
+      final path = await BackupService.backupToFile();
+      if (!context.mounted) return;
+      if (path != null) {
+        _showSnack(context, 'Backup saved');
+      }
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Backup failed: $e', error: true);
+    }
+  }
+
+  Future<void> _runBackupAndMail(BuildContext context) async {
+    try {
+      await BackupService.backupAndShare();
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Backup failed: $e', error: true);
+    }
+  }
+
+  Future<void> _runRestore(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore'),
+        content: const Text(
+          'Restoring replaces ALL current data on this device with the '
+          'selected backup. This cannot be undone.\n\nContinue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Restore',
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await BackupService.restoreFromPickedFile();
+      await StorageService.clearSelectedCompany();
+      if (context.mounted) {
+        _showSnack(context, 'Data restored successfully');
+      }
+    } on RestoreCancelled {
+      // user backed out of the file picker
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Restore failed: $e', error: true);
+    }
+  }
+
+  Future<void> _runEmergencyBackup(BuildContext context) async {
+    try {
+      await BackupService.emergencyBackup();
+      if (context.mounted) {
+        _showSnack(context, 'Emergency backup saved on this device');
+      }
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Backup failed: $e', error: true);
+    }
+  }
+
+  Future<void> _runEmergencyRestore(BuildContext context) async {
+    List<File> backups;
+    try {
+      backups = await BackupService.listEmergencyBackups();
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Error: $e', error: true);
+      return;
+    }
+    if (!context.mounted) return;
+    if (backups.isEmpty) {
+      _showSnack(context, 'No emergency backups found on this device',
+          error: true);
+      return;
+    }
+    final chosen = await showDialog<File>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Emergency Restore'),
+        children: backups
+            .map(
+              (file) => SimpleDialogOption(
+                onPressed: () => Navigator.of(context).pop(file),
+                child: Text(
+                  _describeBackupFile(file),
+                  style: const TextStyle(fontSize: 15),
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (chosen == null || !context.mounted) return;
+    try {
+      await BackupService.restoreFromEmergencyBackup(chosen);
+      await StorageService.clearSelectedCompany();
+      if (context.mounted) {
+        _showSnack(context, 'Data restored from emergency backup');
+      }
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Restore failed: $e', error: true);
+    }
+  }
+
+  String _describeBackupFile(File file) {
+    // tompa_backup_yyyyMMdd_HHmmss.db
+    final name = file.uri.pathSegments.last;
+    final match =
+        RegExp(r'tompa_backup_(\d{8})_(\d{6})\.db').firstMatch(name);
+    if (match == null) return name;
+    final d = match.group(1)!;
+    final t = match.group(2)!;
+    return '${d.substring(6, 8)}/${d.substring(4, 6)}/${d.substring(0, 4)} '
+        '${t.substring(0, 2)}:${t.substring(2, 4)}:${t.substring(4, 6)}';
+  }
+
+  Future<void> _runSplitCompany(BuildContext context) async {
+    List<Map<String, dynamic>> companies;
+    try {
+      companies = await StorageService.loadCompanies();
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Error: $e', error: true);
+      return;
+    }
+    if (!context.mounted) return;
+    if (companies.isEmpty) {
+      _showSnack(context, 'No companies to split', error: true);
+      return;
+    }
+    final company = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Split Company'),
+        children: companies
+            .map(
+              (c) => SimpleDialogOption(
+                onPressed: () => Navigator.of(context).pop(c),
+                child: Text(c['name'] as String? ?? '',
+                    style: const TextStyle(fontSize: 16)),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (company == null || !context.mounted) return;
+
+    final splitDate = await showDatePicker(
+      context: context,
+      initialDate: DateTime(DateTime.now().year, 4, 1),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      helpText: 'Split books from',
+    );
+    if (splitDate == null || !context.mounted) return;
+
+    final splitDateDisplay = DateFormat('dd/MM/yyyy').format(splitDate);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Split Company?'),
+        content: Text(
+          'A new company "${company['name']} (from $splitDateDisplay)" will be '
+          'created with books beginning $splitDateDisplay.\n\n'
+          '• Closing balances up to that date become opening balances.\n'
+          '• Vouchers from that date onwards are copied across.\n'
+          '• "${company['name']}" itself is not changed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Split',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await SplitCompanyService.splitCompany(
+        companyId: company['id'] as int,
+        splitDate: splitDate,
+      );
+      if (context.mounted) {
+        _showSnack(context,
+            'Company split. New books start $splitDateDisplay');
+      }
+    } catch (e) {
+      if (context.mounted) _showSnack(context, 'Split failed: $e', error: true);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -92,30 +307,22 @@ class Utility extends StatelessWidget {
                     const SizedBox(height: 16),
                     _buildButton(
                       'Backup',
-                      onPressed: () {
-                        // TODO: Implement Backup
-                      },
+                      onPressed: () => _runBackup(context),
                     ),
                     const SizedBox(height: 16),
                     _buildButton(
                       'Backup And Mail',
-                      onPressed: () {
-                        // TODO: Implement Backup And Mail
-                      },
+                      onPressed: () => _runBackupAndMail(context),
                     ),
                     const SizedBox(height: 16),
                     _buildButton(
                       'Restore',
-                      onPressed: () {
-                        // TODO: Implement Restore
-                      },
+                      onPressed: () => _runRestore(context),
                     ),
                     const SizedBox(height: 16),
                     _buildButton(
                       'Split Company',
-                      onPressed: () {
-                        // TODO: Implement Split Company
-                      },
+                      onPressed: () => _runSplitCompany(context),
                     ),
                     const SizedBox(height: 16),
                     _buildButton(
@@ -144,16 +351,12 @@ class Utility extends StatelessWidget {
                     const SizedBox(height: 16),
                     _buildButton(
                       'Emergency Backup',
-                      onPressed: () {
-                        // TODO: Implement Emergency Backup
-                      },
+                      onPressed: () => _runEmergencyBackup(context),
                     ),
                     const SizedBox(height: 16),
                     _buildButton(
                       'Emergency Restore',
-                      onPressed: () {
-                        // TODO: Implement Emergency Restore
-                      },
+                      onPressed: () => _runEmergencyRestore(context),
                     ),
                   ],
                 ),

@@ -18,6 +18,20 @@ class StorageService {
     return _database!;
   }
 
+  // Absolute path of the SQLite database file (used by backup/restore)
+  static Future<String> getDatabaseFilePath() async {
+    String dbPath = await getDatabasesPath();
+    return join(dbPath, 'accounting_app.db');
+  }
+
+  // Close the database so its file can be safely copied or replaced
+  static Future<void> closeDatabase() async {
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
+  }
+
   Future<Database> _initDatabase() async {
     String dbPath = await getDatabasesPath();
     String path = join(dbPath, 'accounting_app.db');
