@@ -15,11 +15,15 @@ class StatementRow {
   /// Ledger line under a group — rendered indented and lighter.
   final bool isIndented;
 
+  /// Ledger this line represents, if it can be drilled into.
+  final String? ledgerName;
+
   const StatementRow(
     this.label,
     this.amount, {
     this.isGroup = false,
     this.isIndented = false,
+    this.ledgerName,
   });
 }
 
@@ -38,6 +42,7 @@ class TFormatTable extends StatelessWidget {
     this.minimumRows = 8,
     this.title,
     this.minSideWidth = 300,
+    this.onLedgerTap,
   });
 
   final List<StatementRow> leftRows;
@@ -56,6 +61,9 @@ class TFormatTable extends StatelessWidget {
   /// Each side keeps at least this width; on a narrow phone the table
   /// scrolls sideways rather than squeezing the columns.
   final double minSideWidth;
+
+  /// Called with a ledger name when a drillable line is tapped.
+  final void Function(String ledgerName)? onLedgerTap;
 
   static String formatAmount(double value) {
     final negative = value < 0;
@@ -210,8 +218,11 @@ class TFormatTable extends StatelessWidget {
       fontSize: 14,
       fontWeight: row.isGroup ? FontWeight.bold : FontWeight.normal,
       color: kStatementGreen,
+      decoration: row.ledgerName != null && onLedgerTap != null
+          ? TextDecoration.underline
+          : null,
     );
-    return Container(
+    final content = Container(
       padding: EdgeInsets.only(
         left: row.isIndented ? 20 : 8,
         right: 8,
@@ -225,6 +236,11 @@ class TFormatTable extends StatelessWidget {
             Text(formatAmount(row.amount!), style: style),
         ],
       ),
+    );
+    if (row.ledgerName == null || onLedgerTap == null) return content;
+    return InkWell(
+      onTap: () => onLedgerTap!(row.ledgerName!),
+      child: content,
     );
   }
 
@@ -270,12 +286,19 @@ class ScheduleIIISection extends StatelessWidget {
     required this.rows,
     this.total,
     this.totalLabel,
+    this.onLedgerTap,
   });
 
   final String title;
   final List<StatementRow> rows;
   final double? total;
   final String? totalLabel;
+  final void Function(String ledgerName)? onLedgerTap;
+
+  Widget _maybeTappable(StatementRow row, Widget child) {
+    if (row.ledgerName == null || onLedgerTap == null) return child;
+    return InkWell(onTap: () => onLedgerTap!(row.ledgerName!), child: child);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -302,7 +325,7 @@ class ScheduleIIISection extends StatelessWidget {
             ),
           ),
           for (final row in rows)
-            Padding(
+            _maybeTappable(row, Padding(
               padding: EdgeInsets.only(
                 left: row.isIndented ? 26 : 10,
                 right: 10,
@@ -334,7 +357,7 @@ class ScheduleIIISection extends StatelessWidget {
                     ),
                 ],
               ),
-            ),
+            )),
           if (total != null) ...[
             Container(height: 1, color: kStatementGreen),
             Container(

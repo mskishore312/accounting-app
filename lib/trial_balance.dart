@@ -333,12 +333,7 @@ class _TrialBalanceState extends State<TrialBalance> {
 
   Future<void> _openLedger(Map<String, dynamic> item) async {
     final ledgerId = item['id'] as int;
-    final periodService = Provider.of<PeriodService>(context, listen: false);
     final navigator = Navigator.of(context);
-
-    if (startDate != null && endDate != null) {
-      periodService.setPeriod(startDate!, endDate!);
-    }
 
     final ledgers = await StorageService.getLedgers();
     final ledger = ledgers.firstWhere(
@@ -353,6 +348,10 @@ class _TrialBalanceState extends State<TrialBalance> {
         builder: (context) => LedgerView(
           ledger: ledger,
           initialEntries: entries,
+          // Open the ledger over the period the trial balance is showing,
+          // without changing the app-wide period.
+          initialStartDate: startDate,
+          initialEndDate: endDate,
         ),
       ),
     );

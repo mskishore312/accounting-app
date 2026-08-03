@@ -37,7 +37,7 @@ class StorageService {
     String path = join(dbPath, 'accounting_app.db');
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -151,6 +151,7 @@ class StorageService {
 
     await _createInvoiceTables(db);
     await _createStockJournalTable(db);
+    await _createVoucherImagesTable(db);
 
     // Create indexes
     await db.execute('CREATE INDEX idx_company_name ON Companies(name)');
@@ -236,6 +237,75 @@ class StorageService {
       await db.execute('ALTER TABLE Ledgers ADD COLUMN gstin TEXT');
       await _createStockJournalTable(db);
     }
+    if (oldVersion < 9) {
+      await _createVoucherImagesTable(db);
+    }
+  }
+
+  /// Photos/scans attached to a voucher (bills, receipts).
+  static Future<void> _createVoucherImagesTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS VoucherImages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voucher_id INTEGER NOT NULL,
+        image_path TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (voucher_id) REFERENCES Vouchers(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_voucher_images ON VoucherImages(voucher_id)',
+    );
+  }
+
+  // --- Voucher image attachments ---
+
+  static Future<void> saveVoucherImage(int voucherId, String imagePath) async {
+    final db = await _instance.database;
+    await db.insert('VoucherImages', {
+      'voucher_id': voucherId,
+      'image_path': imagePath,
+    });
+  }
+
+  static Future<List<String>> getVoucherImages(int voucherId) async {
+    final db = await _instance.database;
+    final rows = await db.query(
+      'VoucherImages',
+      columns: ['image_path'],
+      where: 'voucher_id = ?',
+      whereArgs: [voucherId],
+      orderBy: 'created_at ASC, id ASC',
+    );
+    return rows.map((r) => r['image_path'] as String).toList();
+  }
+
+  static Future<void> deleteVoucherImage(int voucherId, String imagePath) async {
+    final db = await _instance.database;
+    await db.delete(
+      'VoucherImages',
+      where: 'voucher_id = ? AND image_path = ?',
+      whereArgs: [voucherId, imagePath],
+    );
+  }
+
+  /// Number of attachments per voucher id, for list badges.
+  static Future<Map<int, int>> getVoucherImageCounts([int? companyId]) async {
+    if (companyId == null) {
+      final comp = await getSelectedCompany();
+      companyId = comp?['id'] as int? ?? 0;
+    }
+    final db = await _instance.database;
+    final rows = await db.rawQuery('''
+      SELECT vi.voucher_id AS vid, COUNT(*) AS n
+      FROM VoucherImages vi
+      JOIN Vouchers v ON v.id = vi.voucher_id
+      WHERE v.company_id = ?
+      GROUP BY vi.voucher_id
+    ''', [companyId]);
+    return {
+      for (final r in rows) (r['vid'] as int): (r['n'] as int),
+    };
   }
 
   static Future<void> _createStockJournalTable(DatabaseExecutor db) async {

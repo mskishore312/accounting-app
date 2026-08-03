@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/ledger_creation.dart';
+import 'package:accounting_app/ui/widgets/voucher_image_picker.dart';
 
 class ReceiptVoucher extends StatefulWidget {
   final int? voucherId;
@@ -21,6 +22,8 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
   List<DebitEntry> _debitEntries = [];
   List<CreditEntry> _creditEntries = [];
   
+  final List<String> _pendingImages = []; // picked before first save
+  int? _savedVoucherId;
   double _totalDebit = 0.0;
   double _totalCredit = 0.0;
   bool _isLoading = true;
@@ -350,6 +353,7 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
         if (widget.voucherId != null) {
           // Update existing voucher
           voucherId = widget.voucherId!;
+          _savedVoucherId = voucherId;
           await txn.update('Vouchers', {
             'voucher_number': _voucherNoController.text,
             'voucher_date': _selectedDate.toIso8601String().split('T')[0],
@@ -429,6 +433,7 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                 'type': 'Receipt',
                 'total': _totalDebit,
               });
+              _savedVoucherId = voucherId;
               break; // success
             } catch (e) {
               // If UNIQUE constraint on voucher_number, try next candidate
@@ -475,6 +480,11 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
           }
         }
       });
+
+      final attachTo = _savedVoucherId ?? widget.voucherId;
+      if (attachTo != null && _pendingImages.isNotEmpty) {
+        await VoucherImagePicker.saveAllPending(attachTo, _pendingImages);
+      }
 
       if (mounted) {
         final message = widget.voucherId != null 
@@ -1143,8 +1153,16 @@ class _ReceiptVoucherState extends State<ReceiptVoucher> {
                       ),
                     ),
                     
+                    const SizedBox(height: 24),
+
+                    // Attachments (bills / receipt photos)
+                    VoucherImagePicker(
+                      voucherId: widget.voucherId,
+                      pendingImages: _pendingImages,
+                    ),
+
                     const SizedBox(height: 32),
-                    
+
                     // Save Button
                     SizedBox(
                       width: double.infinity,

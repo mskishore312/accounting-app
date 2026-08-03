@@ -5,6 +5,7 @@ import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
 import 'package:accounting_app/ui/widgets/report_view_toggle.dart';
 import 'package:accounting_app/ui/widgets/t_format_table.dart';
+import 'package:accounting_app/ui/widgets/ledger_drilldown.dart';
 import 'package:provider/provider.dart';
 
 class BalanceSheet extends StatefulWidget {
@@ -198,6 +199,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
             item['name'] as String,
             item['balance'] as double,
             isIndented: true,
+            ledgerName: item['name'] as String,
           ));
         }
       }
@@ -233,6 +235,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
           '   ${item['name']}',
           item['balance'] as double,
           isIndented: true,
+          ledgerName: item['name'] as String,
         ));
       }
     }
@@ -243,6 +246,15 @@ class _BalanceSheetState extends State<BalanceSheet> {
   List<StatementRow> _headed(String heading, List<StatementRow> rows) {
     if (rows.isEmpty) return const [];
     return [StatementRow(heading, null, isGroup: true), ...rows];
+  }
+
+  void _openLedger(String ledgerName) {
+    openLedgerDrilldown(
+      context,
+      ledgerName: ledgerName,
+      startDate: startDate,
+      endDate: endDate,
+    );
   }
 
   // --- Views --------------------------------------------------------
@@ -257,6 +269,7 @@ class _BalanceSheetState extends State<BalanceSheet> {
       ));
     }
     return TFormatTable(
+      onLedgerTap: _openLedger,
       leftRows: liabilityRows,
       rightRows: _sideRows(assetsData),
       leftTotal: totalLiabilities + netProfit,
@@ -327,12 +340,14 @@ class _BalanceSheetState extends State<BalanceSheet> {
     return Column(
       children: [
         ScheduleIIISection(
+          onLedgerTap: _openLedger,
           title: 'I. EQUITY AND LIABILITIES',
           rows: shareholderRows,
           total: totalLiabilities + netProfit,
           totalLabel: 'TOTAL',
         ),
         ScheduleIIISection(
+          onLedgerTap: _openLedger,
           title: 'II. ASSETS',
           rows: assetRows,
           total: totalAssets,

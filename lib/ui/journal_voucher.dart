@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/ledger_creation.dart';
+import 'package:accounting_app/ui/widgets/voucher_image_picker.dart';
 
 class JournalVoucher extends StatefulWidget {
   final int? voucherId;
@@ -23,6 +24,8 @@ class _JournalVoucherState extends State<JournalVoucher> {
   List<DebitEntry> debitEntries = [];
   List<CreditEntry> creditEntries = [];
   
+  final List<String> _pendingImages = [];
+  int? _savedVoucherId;
   double totalDebits = 0.0;
   double totalCredits = 0.0;
   bool _isEditMode = false;
@@ -371,6 +374,7 @@ class _JournalVoucherState extends State<JournalVoucher> {
       final database = await StorageService().database;
       await database.transaction((transaction) async {
         final voucherId = await StorageService.saveVoucher(voucher, transaction);
+        _savedVoucherId = voucherId;
 
         if (_isEditMode) {
           await StorageService.deleteVoucherEntries(voucherId, transaction);
@@ -406,6 +410,11 @@ class _JournalVoucherState extends State<JournalVoucher> {
           }, transaction);
         }
       });
+
+      final attachTo = _savedVoucherId ?? widget.voucherId;
+      if (attachTo != null && _pendingImages.isNotEmpty) {
+        await VoucherImagePicker.saveAllPending(attachTo, _pendingImages);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -991,6 +1000,14 @@ class _JournalVoucherState extends State<JournalVoucher> {
                   ],
                 ),
               ),
+            ),
+          ),
+          // Attachments (bills / receipt photos)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: VoucherImagePicker(
+              voucherId: widget.voucherId,
+              pendingImages: _pendingImages,
             ),
           ),
           // Save button at the bottom

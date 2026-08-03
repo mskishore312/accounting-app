@@ -5,6 +5,7 @@ import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/widgets/date_range_selector.dart';
 import 'package:accounting_app/ui/widgets/report_view_toggle.dart';
 import 'package:accounting_app/ui/widgets/t_format_table.dart';
+import 'package:accounting_app/ui/widgets/ledger_drilldown.dart';
 import 'package:provider/provider.dart';
 
 class TradingAndPL extends StatefulWidget {
@@ -182,6 +183,15 @@ class _TradingAndPLState extends State<TradingAndPL> {
     return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 
+  void _openLedger(String ledgerName) {
+    openLedgerDrilldown(
+      context,
+      ledgerName: ledgerName,
+      startDate: startDate,
+      endDate: endDate,
+    );
+  }
+
   // --- Row building -------------------------------------------------
 
   List<StatementRow> _group(
@@ -197,6 +207,7 @@ class _TradingAndPLState extends State<TradingAndPL> {
           item['name'] as String,
           item['balance'] as double,
           isIndented: true,
+          ledgerName: item['name'] as String,
         ));
       }
     }
@@ -233,6 +244,7 @@ class _TradingAndPLState extends State<TradingAndPL> {
         (grossProfit < 0 ? grossProfit.abs() : 0);
 
     return TFormatTable(
+      onLedgerTap: _openLedger,
       title: 'TRADING ACCOUNT',
       leftRows: left,
       rightRows: right,
@@ -270,6 +282,7 @@ class _TradingAndPLState extends State<TradingAndPL> {
         (netProfit < 0 ? netProfit.abs() : 0);
 
     return TFormatTable(
+      onLedgerTap: _openLedger,
       title: 'PROFIT & LOSS ACCOUNT',
       leftRows: left,
       rightRows: right,

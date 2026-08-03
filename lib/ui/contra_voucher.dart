@@ -1,4 +1,5 @@
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/ui/widgets/voucher_image_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -17,6 +18,7 @@ class _ContraVoucherState extends State<ContraVoucher> {
   final amount = TextEditingController();
   final narration = TextEditingController();
   List<Map<String, dynamic>> ledgers = [];
+  final List<String> _pendingImages = [];
   int? fromLedgerId;
   int? toLedgerId;
   DateTime date = DateTime.now();
@@ -88,7 +90,7 @@ class _ContraVoucherState extends State<ContraVoucher> {
     }
     setState(() => saving = true);
     try {
-      await StorageService.saveContraVoucher(
+      final savedId = await StorageService.saveContraVoucher(
         voucherId: widget.voucherId,
         voucherNumber: number.text.trim(),
         voucherDate: DateFormat('yyyy-MM-dd').format(date),
@@ -97,6 +99,9 @@ class _ContraVoucherState extends State<ContraVoucher> {
         amount: double.parse(amount.text.replaceAll(',', '')),
         narration: narration.text.trim(),
       );
+      if (_pendingImages.isNotEmpty) {
+        await VoucherImagePicker.saveAllPending(savedId, _pendingImages);
+      }
       if (mounted) Navigator.pop(context, true);
     } catch (error) {
       if (mounted) {
@@ -175,6 +180,11 @@ class _ContraVoucherState extends State<ContraVoucher> {
                       labelText: 'Narration',
                       border: OutlineInputBorder(),
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  VoucherImagePicker(
+                    voucherId: widget.voucherId,
+                    pendingImages: _pendingImages,
                   ),
                   const SizedBox(height: 20),
                   FilledButton.icon(

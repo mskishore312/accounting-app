@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/ledger_creation.dart';
+import 'package:accounting_app/ui/widgets/voucher_image_picker.dart';
 
 class PaymentVoucher extends StatefulWidget {
   final int? voucherId;
@@ -22,6 +23,8 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
   List<DebitEntry> _debitEntries = [];
   List<CreditEntry> _creditEntries = [];
 
+  final List<String> _pendingImages = []; // picked before first save
+  int? _savedVoucherId;
   double _totalDebit = 0.0;
   double _totalCredit = 0.0;
   bool _isLoading = true;
@@ -424,6 +427,7 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
         if (widget.voucherId != null) {
           // Update existing voucher
           voucherId = widget.voucherId!;
+          _savedVoucherId = voucherId;
           await txn.update('Vouchers', {
             'voucher_number': _voucherNoController.text,
             'voucher_date': _selectedDate.toIso8601String().split('T')[0],
@@ -471,6 +475,11 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
           }
         }
       });
+
+      final attachTo = _savedVoucherId ?? widget.voucherId;
+      if (attachTo != null && _pendingImages.isNotEmpty) {
+        await VoucherImagePicker.saveAllPending(attachTo, _pendingImages);
+      }
 
       if (mounted) {
         final message = widget.voucherId != null
@@ -1112,6 +1121,14 @@ class _PaymentVoucherState extends State<PaymentVoucher> {
                           fontSize: 14,
                         ),
                       ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Attachments (bills / receipt photos)
+                    VoucherImagePicker(
+                      voucherId: widget.voucherId,
+                      pendingImages: _pendingImages,
                     ),
 
                     const SizedBox(height: 32),

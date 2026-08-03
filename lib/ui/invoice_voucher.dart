@@ -1,4 +1,5 @@
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/ui/widgets/voucher_image_picker.dart';
 import 'package:accounting_app/services/pdf_service.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -33,6 +34,7 @@ class _InvoiceVoucherState extends State<InvoiceVoucher> {
   bool interstate = false;
   bool loading = true;
   bool saving = false;
+  final List<String> _pendingImages = [];
   int? savedVoucherId;
 
   bool get isSales => widget.type == 'Sales';
@@ -244,6 +246,9 @@ class _InvoiceVoucherState extends State<InvoiceVoucher> {
         narration: narration.text.trim(),
         lines: _linePayload(),
       );
+      if (_pendingImages.isNotEmpty && savedVoucherId != null) {
+        await VoucherImagePicker.saveAllPending(savedVoucherId!, _pendingImages);
+      }
       if (exportPdf) await _exportPdf();
       if (mounted && !exportPdf) Navigator.pop(context, true);
     } catch (error) {
@@ -385,6 +390,11 @@ class _InvoiceVoucherState extends State<InvoiceVoucher> {
                       labelText: 'Narration',
                       border: OutlineInputBorder(),
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  VoucherImagePicker(
+                    voucherId: savedVoucherId,
+                    pendingImages: _pendingImages,
                   ),
                   const SizedBox(height: 20),
                   Row(

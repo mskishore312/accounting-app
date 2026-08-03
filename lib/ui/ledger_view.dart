@@ -17,10 +17,17 @@ class LedgerView extends StatefulWidget {
   final Map<String, dynamic> ledger;
   final List<Map<String, dynamic>> initialEntries;
 
+  /// Period to open the ledger with. Reports pass their own range so a
+  /// drill-down shows exactly the period the report was showing.
+  final DateTime? initialStartDate;
+  final DateTime? initialEndDate;
+
   const LedgerView({
     Key? key,
     required this.ledger,
     required this.initialEntries,
+    this.initialStartDate,
+    this.initialEndDate,
   }) : super(key: key);
 
   @override
@@ -90,6 +97,9 @@ class _LedgerViewState extends State<LedgerView> {
   void initState() {
     super.initState();
     _entries = List<Map<String, dynamic>>.from(widget.initialEntries);
+    // Honour a period handed in by a report drill-down.
+    startDate = widget.initialStartDate;
+    endDate = widget.initialEndDate;
 
     // Sync horizontal scroll positions between top table and bottom summary.
     _topHorizontalController.addListener(() {
