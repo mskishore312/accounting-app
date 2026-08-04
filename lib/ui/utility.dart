@@ -7,6 +7,7 @@ import 'package:accounting_app/services/backup_service.dart';
 import 'package:accounting_app/services/split_company_service.dart';
 import 'package:accounting_app/ui/company_settings_selection.dart';
 import 'package:accounting_app/ui/edit_company.dart';
+import 'package:accounting_app/ui/ai_settings.dart';
 
 class Utility extends StatelessWidget {
   const Utility({Key? key}) : super(key: key);
@@ -345,6 +346,18 @@ class Utility extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (context) => const CompanySettingsSelection(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _buildButton(
+                      'AI Settings',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AiSettings(),
                           ),
                         );
                       },

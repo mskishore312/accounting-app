@@ -23,6 +23,7 @@ dependencies:
   url_launcher: ^6.2.2
   file_picker: ^8.1.7
   image_picker: ^1.1.2
+  http: ^1.2.2
   syncfusion_flutter_pdf: ^29.1.38
   google_mlkit_text_recognition: ^0.14.0
 

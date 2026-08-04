@@ -258,6 +258,27 @@ class StorageService {
     );
   }
 
+  // --- App-level settings (key/value) ---
+
+  static Future<String?> getSetting(String key) async {
+    final db = await _instance.database;
+    final rows = await db.query('Settings',
+        columns: ['value'], where: 'key = ?', whereArgs: [key], limit: 1);
+    if (rows.isEmpty) return null;
+    return rows.first['value'] as String?;
+  }
+
+  static Future<void> setSetting(String key, String value) async {
+    final db = await _instance.database;
+    await db.delete('Settings', where: 'key = ?', whereArgs: [key]);
+    await db.insert('Settings', {'key': key, 'value': value});
+  }
+
+  static Future<void> deleteSetting(String key) async {
+    final db = await _instance.database;
+    await db.delete('Settings', where: 'key = ?', whereArgs: [key]);
+  }
+
   // --- Voucher image attachments ---
 
   static Future<void> saveVoucherImage(int voucherId, String imagePath) async {
