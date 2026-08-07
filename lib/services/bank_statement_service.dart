@@ -25,6 +25,21 @@ class BankStatementTransaction {
   String suggestionLabel = 'Review ledger';
 }
 
+/// A counterparty guess, with the reason shown to the user.
+///
+/// [confident] marks a guess strong enough not to need a second look; anything
+/// else, Suspense included, is offered but flagged for review.
+class LedgerSuggestion {
+  final Map<String, dynamic>? ledger;
+  final String label;
+  final bool confident;
+
+  const LedgerSuggestion(this.ledger, this.label, {this.confident = false});
+
+  bool get isSuspense =>
+      (ledger?['classification'] as String? ?? '') == 'Suspense A/c';
+}
+
 class BankStatementService {
   static final RegExp _dateAtStart = RegExp(
     r'^\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{2,4})\b',
@@ -153,74 +168,87 @@ class BankStatementService {
         .toList();
 
     for (final transaction in transactions) {
-      transaction.suggestedLedgerId = null;
-      transaction.suggestionLabel = 'No confident suggestion — choose a ledger';
-      final description = transaction.description.toLowerCase();
-      Map<String, dynamic>? match;
-      var bestScore = 0.0;
+      final suggestion = suggestLedgerFor(
+        description: transaction.description,
+        isDeposit: transaction.direction == BankTransactionDirection.deposit,
+        candidates: candidates,
+      );
+      transaction.suggestedLedgerId = suggestion.ledger?['id'] as int?;
+      transaction.suggestionLabel = suggestion.label;
+    }
+  }
 
-      for (final ledger in candidates) {
-        final name = (ledger['name'] as String? ?? '').toLowerCase().trim();
-        final score = _ledgerMatchScore(description, name);
-        if (score > bestScore) {
-          bestScore = score;
-          match = ledger;
-        }
-      }
+  /// Best counterparty for one line, and how it was arrived at.
+  ///
+  /// Tries the narration against real ledger names, then a small keyword map,
+  /// then falls back to a Suspense ledger so a line is never silently posted
+  /// to something unrelated. Shared by the older statement importer and the
+  /// AI assistant, so both explain their guesses the same way.
+  static LedgerSuggestion suggestLedgerFor({
+    required String description,
+    required bool isDeposit,
+    required List<Map<String, dynamic>> candidates,
+  }) {
+    final lower = description.toLowerCase();
+    Map<String, dynamic>? match;
+    var bestScore = 0.0;
 
-      if (bestScore >= 0.6 && match != null) {
-        transaction.suggestionLabel = bestScore >= 0.9
-            ? 'Strong match from narration'
-            : 'Possible match from narration — review';
-      } else {
-        match = null;
-      }
-
-      if (match == null) {
-        final keywords = transaction.direction == BankTransactionDirection.deposit
-            ? <String, List<String>>{
-                'interest': ['interest'],
-                'sales': ['sale', 'customer', 'receipt'],
-                'salary': ['salary', 'payroll'],
-              }
-            : <String, List<String>>{
-                'bank charges': ['charge', 'fee', 'commission'],
-                'salary': ['salary', 'payroll'],
-                'rent': ['rent'],
-                'electricity': ['electric', 'eb bill', 'power'],
-                'fuel': ['fuel', 'petrol', 'diesel'],
-                'tax': ['gst', 'tax', 'tds'],
-                'cash': ['atm', 'cash withdrawal'],
-              };
-
-        for (final keywordEntry in keywords.entries) {
-          if (!keywordEntry.value.any(description.contains)) continue;
-          match = candidates.cast<Map<String, dynamic>?>().firstWhere(
-                (ledger) => (ledger!['name'] as String)
-                    .toLowerCase()
-                    .contains(keywordEntry.key),
-                orElse: () => null,
-              );
-          if (match != null) {
-            transaction.suggestionLabel = 'Suggested from narration';
-            break;
-          }
-        }
-      }
-
-      match ??= candidates.cast<Map<String, dynamic>?>().firstWhere(
-            (ledger) =>
-                (ledger!['classification'] as String? ?? '') == 'Suspense A/c',
-            orElse: () => null,
-          );
-      if (match != null) {
-        transaction.suggestedLedgerId = match['id'] as int;
-        if (transaction.suggestionLabel ==
-            'No confident suggestion — choose a ledger') {
-          transaction.suggestionLabel = 'Posted to Suspense — review';
-        }
+    for (final ledger in candidates) {
+      final name = (ledger['name'] as String? ?? '').toLowerCase().trim();
+      final score = _ledgerMatchScore(lower, name);
+      if (score > bestScore) {
+        bestScore = score;
+        match = ledger;
       }
     }
+
+    if (bestScore >= 0.6 && match != null) {
+      return LedgerSuggestion(
+        match,
+        bestScore >= 0.9
+            ? 'Strong match from narration'
+            : 'Possible match from narration — review',
+        confident: bestScore >= 0.9,
+      );
+    }
+
+    final keywords = isDeposit
+        ? <String, List<String>>{
+            'interest': ['interest'],
+            'sales': ['sale', 'customer', 'receipt'],
+            'salary': ['salary', 'payroll'],
+          }
+        : <String, List<String>>{
+            'bank charges': ['charge', 'fee', 'commission'],
+            'salary': ['salary', 'payroll'],
+            'rent': ['rent'],
+            'electricity': ['electric', 'eb bill', 'power'],
+            'fuel': ['fuel', 'petrol', 'diesel'],
+            'tax': ['gst', 'tax', 'tds'],
+            'cash': ['atm', 'cash withdrawal'],
+          };
+
+    for (final entry in keywords.entries) {
+      if (!entry.value.any(lower.contains)) continue;
+      final hit = candidates.cast<Map<String, dynamic>?>().firstWhere(
+            (ledger) =>
+                (ledger!['name'] as String).toLowerCase().contains(entry.key),
+            orElse: () => null,
+          );
+      if (hit != null) {
+        return LedgerSuggestion(hit, 'Suggested from narration');
+      }
+    }
+
+    final suspense = candidates.cast<Map<String, dynamic>?>().firstWhere(
+          (ledger) =>
+              (ledger!['classification'] as String? ?? '') == 'Suspense A/c',
+          orElse: () => null,
+        );
+    if (suspense != null) {
+      return LedgerSuggestion(suspense, 'Parked in Suspense — please review');
+    }
+    return const LedgerSuggestion(null, 'No confident suggestion — choose a ledger');
   }
 
   static double _ledgerMatchScore(String description, String ledgerName) {

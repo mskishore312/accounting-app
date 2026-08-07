@@ -1,4 +1,5 @@
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/services/bank_statement_service.dart';
 import 'package:accounting_app/services/financial_statement_service.dart';
 import 'package:accounting_app/services/gemini_service.dart';
 
@@ -57,9 +58,12 @@ class ProposedBankRow {
   int? ledgerId;
   String? ledgerName;
 
-  /// A ledger the model suggested that does not exist in this company.
-  /// Kept so the review table can explain why the row is unassigned.
-  final String? unmatchedSuggestion;
+  /// Why this counterparty was chosen, shown next to it in the review table.
+  String suggestionLabel;
+
+  /// True only for a guess strong enough that it does not need a second look.
+  /// Suspense is never confident.
+  bool confident;
 
   bool selected;
 
@@ -70,11 +74,23 @@ class ProposedBankRow {
     required this.isDeposit,
     this.ledgerId,
     this.ledgerName,
-    this.unmatchedSuggestion,
+    this.suggestionLabel = '',
+    this.confident = false,
     this.selected = true,
   });
 
   bool get isReady => ledgerId != null && amount > 0;
+
+  /// Assigned, but the user should still look at it.
+  bool get needsReview => ledgerId != null && !confident;
+
+  /// Record a ledger the user picked themselves.
+  void chooseLedger(int id, String name) {
+    ledgerId = id;
+    ledgerName = name;
+    suggestionLabel = 'Chosen by you';
+    confident = true;
+  }
 }
 
 /// Raised when the model's answer cannot be turned into a valid voucher.
@@ -413,12 +429,14 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
       timeout: const Duration(seconds: 90),
     );
 
-    final ledgers = await StorageService.getLedgers();
-    final byName = {
+    var ledgers = await StorageService.getLedgers();
+    var byName = {
       for (final l in ledgers) (l['name'] as String).toLowerCase(): l,
     };
 
     final rows = <ProposedBankRow>[];
+    var needSuspense = false;
+
     for (final raw in (json['rows'] as List<dynamic>? ?? const [])) {
       final row = raw as Map<String, dynamic>;
       final amount = _toAmount(row['amount']);
@@ -431,19 +449,54 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
         continue; // a row without a usable date cannot be posted
       }
 
-      final suggested = (row['ledger'] as String?)?.trim() ?? '';
-      final ledger = suggested.isEmpty ? null : byName[suggested.toLowerCase()];
+      final description = (row['description'] as String?)?.trim() ?? '';
+      final isDeposit =
+          (row['direction'] as String?)?.toLowerCase() == 'deposit';
+      final named = (row['ledger'] as String?)?.trim() ?? '';
+      final fromModel = named.isEmpty ? null : byName[named.toLowerCase()];
+
+      if (fromModel != null) {
+        rows.add(ProposedBankRow(
+          date: date,
+          description: description,
+          amount: amount,
+          isDeposit: isDeposit,
+          ledgerId: fromModel['id'] as int?,
+          ledgerName: fromModel['name'] as String?,
+          suggestionLabel: 'Suggested by the assistant',
+          confident: true,
+        ));
+        continue;
+      }
+
+      // The model either named a ledger this company does not have, or
+      // declined to guess. Fall back to narration matching, then Suspense.
+      final suggestion = BankStatementService.suggestLedgerFor(
+        description: description,
+        isDeposit: isDeposit,
+        candidates: ledgers,
+      );
+      if (suggestion.ledger == null) needSuspense = true;
+
+      // When the model named a ledger this company does not have, say so —
+      // whatever we fell back to. Otherwise the user sees "parked in
+      // Suspense" with no hint that a better-named account might be missing.
+      var label = suggestion.label;
+      if (named.isNotEmpty) {
+        label = 'Suggested "$named", which is not a ledger here';
+        final fallback = suggestion.ledger?['name'] as String?;
+        if (fallback != null) label = '$label; using $fallback';
+      }
 
       rows.add(ProposedBankRow(
         date: date,
-        description: (row['description'] as String?)?.trim() ?? '',
+        description: description,
         amount: amount,
-        isDeposit: (row['direction'] as String?)?.toLowerCase() == 'deposit',
-        ledgerId: ledger?['id'] as int?,
-        ledgerName: ledger?['name'] as String?,
-        unmatchedSuggestion: ledger == null && suggested.isNotEmpty
-            ? suggested
-            : null,
+        isDeposit: isDeposit,
+        ledgerId: suggestion.ledger?['id'] as int?,
+        ledgerName: suggestion.ledger?['name'] as String?,
+        suggestionLabel: label,
+        confident: suggestion.confident,
       ));
     }
 
@@ -452,7 +505,50 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
           'No transactions could be read from that image. Try a sharper photo '
           'showing the date, narration and amount columns.');
     }
+
+    // Nothing could be matched and there is no Suspense ledger to park it in,
+    // so make one rather than leaving rows unpostable.
+    if (needSuspense) {
+      final suspenseId = await _ensureSuspenseLedger();
+      ledgers = await StorageService.getLedgers();
+      byName = {
+        for (final l in ledgers) (l['name'] as String).toLowerCase(): l,
+      };
+      for (final row in rows) {
+        if (row.ledgerId != null) continue;
+        row.ledgerId = suspenseId;
+        row.ledgerName = _suspenseName;
+        // Keep whatever we already knew — usually the ledger name the model
+        // invented — rather than replacing it with a bare Suspense note.
+        row.suggestionLabel =
+            row.suggestionLabel.isEmpty || row.suggestionLabel.startsWith('No ')
+                ? 'Parked in Suspense — please review'
+                : '${row.suggestionLabel}; parked in Suspense';
+      }
+    }
     return rows;
+  }
+
+  static const String _suspenseName = 'Suspense A/c';
+
+  /// The company's Suspense ledger, created if it does not exist yet.
+  Future<int> _ensureSuspenseLedger() async {
+    final ledgers = await StorageService.getLedgers();
+    for (final ledger in ledgers) {
+      if ((ledger['classification'] as String? ?? '') == 'Suspense A/c') {
+        return ledger['id'] as int;
+      }
+    }
+    final company = await StorageService.getSelectedCompany();
+    if (company == null) {
+      throw const AiDraftException('No company selected.');
+    }
+    return StorageService.saveLedger({
+      'company_id': company['id'],
+      'name': _suspenseName,
+      'classification': 'Suspense A/c',
+      'balance': 0.0,
+    });
   }
 
   /// Post reviewed statement rows against [bankLedgerId]. All or nothing.

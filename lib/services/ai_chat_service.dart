@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/services/ai_accounting_service.dart';
 import 'package:accounting_app/services/gemini_service.dart';
 
@@ -20,6 +23,15 @@ class ChatMessage {
   final List<ProposedBankRow>? bankRows;
   bool settled;
 
+  /// Row id once stored, so the message can be settled in the history too.
+  int? id;
+
+  /// Set on a message read back from storage that once carried a draft.
+  /// The draft itself is not restored — the ledgers and images behind it may
+  /// have moved on — so the conversation shows what happened instead of
+  /// offering to post something stale.
+  final String? historyNote;
+
   ChatMessage({
     required this.role,
     required this.text,
@@ -27,9 +39,29 @@ class ChatMessage {
     this.voucher,
     this.bankRows,
     this.settled = false,
+    this.id,
+    this.historyNote,
   });
 
   bool get hasDraft => voucher != null || bankRows != null;
+
+  /// What kind of draft this carried, for the history row.
+  String? get draftKind => voucher != null
+      ? 'voucher'
+      : bankRows != null
+          ? 'bank_rows'
+          : null;
+
+  /// One-line description of the draft, kept in the history.
+  String? get draftSummary {
+    final v = voucher;
+    if (v != null) {
+      return '${v.type} voucher, ${v.totalDebit.toStringAsFixed(2)}';
+    }
+    final rows = bankRows;
+    if (rows != null) return '${rows.length} statement transactions';
+    return null;
+  }
 }
 
 /// Drives the in-app chatbot.
@@ -53,6 +85,68 @@ class AiChatService {
   String? _booksCache;
 
   void invalidateBooks() => _booksCache = null;
+
+  // --- history ---
+
+  /// The stored conversation for the selected company, oldest first.
+  ///
+  /// Drafts are not revived: a message that carried one comes back as plain
+  /// text plus a note saying what it was, because the ledgers, images and
+  /// balances it was built from may all have changed since.
+  Future<List<ChatMessage>> loadHistory() async {
+    final rows = await StorageService.getChatMessages();
+    return rows.map((row) {
+      final kind = row['draft_kind'] as String?;
+      final summary = row['draft_summary'] as String?;
+      final settled = (row['settled'] as int? ?? 0) == 1;
+      return ChatMessage(
+        id: row['id'] as int?,
+        role: row['role'] == 'user' ? ChatRole.user : ChatRole.assistant,
+        text: row['text'] as String? ?? '',
+        images: _decodeImages(row['images'] as String?),
+        settled: true,
+        historyNote: kind == null
+            ? null
+            : '${summary ?? 'Draft'} — ${settled ? 'posted' : 'not posted'}',
+      );
+    }).toList();
+  }
+
+  /// Store a message and stamp it with its row id.
+  Future<void> remember(ChatMessage message) async {
+    try {
+      message.id = await StorageService.saveChatMessage({
+        'role': message.role == ChatRole.user ? 'user' : 'assistant',
+        'text': message.text,
+        'images': message.images.isEmpty ? null : jsonEncode(message.images),
+        'draft_kind': message.draftKind,
+        'draft_summary': message.draftSummary,
+        'settled': message.settled ? 1 : 0,
+      });
+    } catch (_) {
+      // History is a convenience; never break the conversation over it.
+    }
+  }
+
+  /// Record that a draft was acted on, so a reopened chat says so.
+  Future<void> rememberSettled(ChatMessage message) async {
+    final id = message.id;
+    if (id == null) return;
+    try {
+      await StorageService.markChatMessageSettled(id);
+    } catch (_) {}
+  }
+
+  Future<void> clearHistory() => StorageService.clearChatMessages();
+
+  static List<String> _decodeImages(String? raw) {
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) return decoded.cast<String>();
+    } catch (_) {}
+    return const [];
+  }
 
   /// How many earlier turns to replay. Older turns keep their text but drop
   /// their images, which otherwise dominate the request payload.

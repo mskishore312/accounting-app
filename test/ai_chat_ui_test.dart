@@ -44,6 +44,17 @@ void main() {
     }
   }
 
+  // Open the assistant without pumpAndSettle: the panel shows a spinner while
+  // it loads chat history, and an indeterminate CircularProgressIndicator
+  // never settles, so pumpAndSettle would always time out.
+  Future<void> openPanel(WidgetTester tester) async {
+    await tester.tap(find.byType(AiChatLauncher));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await drainDb(tester);
+    await tester.pump();
+  }
+
   // Mirrors the MaterialApp in main.dart, but with a .value provider so
   // teardown does not dispose the app-lifetime PeriodService singleton and
   // break every following test. The final test pumps the real MyApp to prove
@@ -135,8 +146,7 @@ void main() {
       await tester.pumpWidget(appWith(const Gateway()));
       await drainDb(tester);
 
-      await tester.tap(find.byType(AiChatLauncher));
-      await tester.pumpAndSettle();
+      await openPanel(tester);
 
       expect(find.byType(AiChatSheet), findsOneWidget);
       expect(
@@ -181,9 +191,7 @@ void main() {
     // directly: show() only completes when the sheet is dismissed, so it can
     // neither be awaited nor left dangling — an un-awaited guarded call
     // poisons every test that runs after it.
-    await tester.tap(find.byType(AiChatLauncher));
-    await tester.pumpAndSettle();
-    await drainDb(tester);
+    await openPanel(tester);
 
     expect(find.textContaining('No Gemini API key'), findsOneWidget);
     expect(find.text('Add key'), findsOneWidget);
@@ -198,18 +206,19 @@ void main() {
             isDeposit: false,
             ledgerId: rentLedgerId,
             ledgerName: 'Rent',
+            suggestionLabel: 'Suggested by the assistant',
+            confident: true,
           ),
           ProposedBankRow(
             date: DateTime(2026, 5, 3),
             description: 'Unknown deposit',
             amount: 1200,
             isDeposit: true,
-            unmatchedSuggestion: 'Fuel Expenses',
+            suggestionLabel: 'Parked in Suspense — please review',
           ),
         ];
 
-    testWidgets('renders every row, and says which ones need a ledger',
-        (tester) async {
+    testWidgets('renders every row with its ledger and reason', (tester) async {
       useTestSurface(tester);
       await tester.pumpWidget(bare(BankRowsReview(
         rows: rows(),
@@ -219,12 +228,31 @@ void main() {
 
       expect(find.text('NEFT rent payment'), findsOneWidget);
       expect(find.text('Unknown deposit'), findsOneWidget);
-      expect(find.text('02/05/2026'), findsOneWidget);
+      expect(find.text('02 May 2026'), findsOneWidget);
 
-      // The unmatched row explains itself instead of silently defaulting.
+      // A confident row names its ledger and why.
+      expect(find.text('Rent'), findsOneWidget);
+      expect(find.text('Suggested by the assistant'), findsOneWidget);
+
+      // An unresolved row says so rather than defaulting silently.
       expect(find.text('Choose ledger'), findsOneWidget);
-      expect(find.textContaining('Fuel Expenses'), findsOneWidget);
-      expect(find.textContaining('still need a ledger'), findsOneWidget);
+      expect(find.textContaining('Suspense'), findsOneWidget);
+      expect(find.textContaining('need a closer look'), findsOneWidget);
+    });
+
+    testWidgets('money in and out are totalled separately', (tester) async {
+      useTestSurface(tester);
+      await tester.pumpWidget(bare(BankRowsReview(
+        rows: rows(),
+        service: AiAccountingService(),
+      )));
+      await drainDb(tester);
+
+      expect(find.text('Received'), findsWidgets);
+      expect(find.text('Paid'), findsWidgets);
+      // 1,200 in and 4,500 out, formatted for India.
+      expect(find.textContaining('1,200.00'), findsWidgets);
+      expect(find.textContaining('4,500.00'), findsWidgets);
     });
 
     testWidgets('the Post button counts only the selected rows',
@@ -244,6 +272,22 @@ void main() {
       expect(find.text('Post 1 transaction(s)'), findsOneWidget);
     });
 
+    testWidgets('the direction chips flip a row between paid and received',
+        (tester) async {
+      useTestSurface(tester);
+      final data = rows();
+      await tester.pumpWidget(bare(BankRowsReview(
+        rows: data,
+        service: AiAccountingService(),
+      )));
+      await drainDb(tester);
+
+      expect(data.first.isDeposit, isFalse);
+      await tester.tap(find.text('Received').last);
+      await tester.pump();
+      expect(data.any((r) => r.isDeposit), isTrue);
+    });
+
     testWidgets('editing an amount is written back to the row', (tester) async {
       useTestSurface(tester);
       final data = rows();
@@ -253,8 +297,14 @@ void main() {
       )));
       await drainDb(tester);
 
-      await tester.enterText(find.byType(TextFormField).first, '5200.50');
-      await tester.pump();
+      // The row amount, not the "Paid" total in the summary above it: only
+      // row amounts carry the +/− sign, and only they are tappable.
+      await tester.tap(find.textContaining('− ').first);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, '5200.50');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
 
       expect(data.first.amount, 5200.50);
     });

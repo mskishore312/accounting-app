@@ -37,7 +37,7 @@ class StorageService {
     String path = join(dbPath, 'accounting_app.db');
     return await openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -152,6 +152,7 @@ class StorageService {
     await _createInvoiceTables(db);
     await _createStockJournalTable(db);
     await _createVoucherImagesTable(db);
+    await _createChatMessagesTable(db);
 
     // Create indexes
     await db.execute('CREATE INDEX idx_company_name ON Companies(name)');
@@ -240,6 +241,77 @@ class StorageService {
     if (oldVersion < 9) {
       await _createVoucherImagesTable(db);
     }
+    if (oldVersion < 10) {
+      await _createChatMessagesTable(db);
+    }
+  }
+
+  /// The AI assistant's conversation, kept per company so the history
+  /// matches the books it is about.
+  static Future<void> _createChatMessagesTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ChatMessages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        text TEXT NOT NULL,
+        images TEXT,
+        draft_kind TEXT,
+        draft_summary TEXT,
+        settled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES Companies(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_chat_company ON ChatMessages(company_id, id)',
+    );
+  }
+
+  /// The stored conversation for the selected company, oldest first.
+  static Future<List<Map<String, dynamic>>> getChatMessages({
+    int limit = 200,
+  }) async {
+    final company = await getSelectedCompany();
+    if (company == null) return const [];
+    final db = await _instance.database;
+    // Take the newest `limit` rows, then hand them back in reading order.
+    final rows = await db.query(
+      'ChatMessages',
+      where: 'company_id = ?',
+      whereArgs: [company['id']],
+      orderBy: 'id DESC',
+      limit: limit,
+    );
+    return rows.reversed.toList();
+  }
+
+  /// Append one message. Returns its row id so it can be settled later.
+  static Future<int> saveChatMessage(Map<String, dynamic> message) async {
+    final company = await getSelectedCompany();
+    if (company == null) throw Exception('No company selected');
+    final db = await _instance.database;
+    return db.insert('ChatMessages', {
+      ...message,
+      'company_id': company['id'],
+    });
+  }
+
+  /// Mark a message's attached draft as dealt with, so a restored
+  /// conversation does not offer to post it again.
+  static Future<void> markChatMessageSettled(int id) async {
+    final db = await _instance.database;
+    await db.update('ChatMessages', {'settled': 1},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Wipe the assistant's history for the selected company.
+  static Future<int> clearChatMessages() async {
+    final company = await getSelectedCompany();
+    if (company == null) return 0;
+    final db = await _instance.database;
+    return db.delete('ChatMessages',
+        where: 'company_id = ?', whereArgs: [company['id']]);
   }
 
   /// Photos/scans attached to a voucher (bills, receipts).

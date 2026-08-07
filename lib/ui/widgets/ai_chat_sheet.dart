@@ -50,10 +50,55 @@ class _AiChatSheetState extends State<AiChatSheet> {
   bool _busy = false;
   bool _configured = true;
 
+  bool _loadingHistory = true;
+
   @override
   void initState() {
     super.initState();
     _checkConfig();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      final past = await _service.loadHistory();
+      if (!mounted) return;
+      setState(() {
+        _messages.insertAll(0, past);
+        _loadingHistory = false;
+      });
+      _scrollToEnd();
+    } catch (_) {
+      if (mounted) setState(() => _loadingHistory = false);
+    }
+  }
+
+  Future<void> _confirmClearHistory() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Clear chat history?'),
+        content: const Text(
+          'This deletes the conversation on this device. Vouchers you already '
+          'posted are not affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _service.clearHistory();
+    if (!mounted) return;
+    setState(_messages.clear);
   }
 
   @override
@@ -86,18 +131,17 @@ class _AiChatSheetState extends State<AiChatSheet> {
 
     final images = List<String>.from(_pending);
     final history = List<ChatMessage>.from(_messages);
+    final outgoing =
+        ChatMessage(role: ChatRole.user, text: text, images: images);
 
     setState(() {
-      _messages.add(ChatMessage(
-        role: ChatRole.user,
-        text: text,
-        images: images,
-      ));
+      _messages.add(outgoing);
       _input.clear();
       _pending.clear();
       _busy = true;
     });
     _scrollToEnd();
+    await _service.remember(outgoing);
 
     final period = Provider.of<PeriodService>(context, listen: false);
     try {
@@ -110,6 +154,7 @@ class _AiChatSheetState extends State<AiChatSheet> {
       );
       if (!mounted) return;
       setState(() => _messages.add(reply));
+      await _service.remember(reply);
     } on AiDraftException catch (e) {
       if (!mounted) return;
       setState(() => _messages.add(_error(e.message)));
@@ -183,14 +228,17 @@ class _AiChatSheetState extends State<AiChatSheet> {
     try {
       await _service.accounting.postVoucher(draft);
       _service.invalidateBooks();
+      await _service.rememberSettled(message);
       if (!mounted) return;
+      final confirmation = ChatMessage(
+        role: ChatRole.assistant,
+        text: 'Posted. The ${draft.type} voucher is in the books.',
+      );
       setState(() {
         message.settled = true;
-        _messages.add(ChatMessage(
-          role: ChatRole.assistant,
-          text: 'Posted. The ${draft.type} voucher is in the books.',
-        ));
+        _messages.add(confirmation);
       });
+      await _service.remember(confirmation);
     } on AiDraftException catch (e) {
       if (!mounted) return;
       setState(() => _messages.add(_error(e.message)));
@@ -217,13 +265,17 @@ class _AiChatSheetState extends State<AiChatSheet> {
     );
     if (posted == null || !mounted) return;
     _service.invalidateBooks();
+    await _service.rememberSettled(message);
+    if (!mounted) return;
+    final confirmation = ChatMessage(
+      role: ChatRole.assistant,
+      text: 'Posted $posted transaction(s) from the statement.',
+    );
     setState(() {
       message.settled = true;
-      _messages.add(ChatMessage(
-        role: ChatRole.assistant,
-        text: 'Posted $posted transaction(s) from the statement.',
-      ));
+      _messages.add(confirmation);
     });
+    await _service.remember(confirmation);
     _scrollToEnd();
   }
 
@@ -246,7 +298,9 @@ class _AiChatSheetState extends State<AiChatSheet> {
             _header(),
             if (!_configured) _configBanner(),
             Expanded(
-              child: _messages.isEmpty
+              child: _loadingHistory
+                  ? const Center(child: CircularProgressIndicator())
+                  : _messages.isEmpty
                   ? _emptyState(sheetScroll)
                   : ListView.builder(
                       controller: sheetScroll,
@@ -283,6 +337,13 @@ class _AiChatSheetState extends State<AiChatSheet> {
                     fontSize: 16),
               ),
             ),
+            if (_messages.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.delete_outline,
+                    color: Colors.white, size: 20),
+                tooltip: 'Clear chat history',
+                onPressed: _busy ? null : _confirmClearHistory,
+              ),
             IconButton(
               icon: const Icon(Icons.settings, color: Colors.white, size: 20),
               tooltip: 'AI Settings',
@@ -386,6 +447,7 @@ class _AiChatSheetState extends State<AiChatSheet> {
                 message.text,
                 style: TextStyle(color: isUser ? Colors.white : Colors.black87),
               ),
+            if (message.historyNote != null) _historyNote(message.historyNote!),
             if (message.voucher != null) _voucherCard(message),
             if (message.bankRows != null) _rowsCard(message),
           ],
@@ -415,6 +477,30 @@ class _AiChatSheetState extends State<AiChatSheet> {
                     ),
                   ))
               .toList(),
+        ),
+      );
+
+  /// What a draft in an earlier session turned into. Not actionable — the
+  /// ledgers and images behind it may have changed since.
+  Widget _historyNote(String note) => Container(
+        margin: const EdgeInsets.only(top: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE0F2E9),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.history, size: 13, color: Colors.grey.shade700),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                note,
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+              ),
+            ),
+          ],
         ),
       );
 

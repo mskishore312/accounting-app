@@ -128,12 +128,14 @@ void main() {
 
       expect(rows[1].amount, 12000.50);
       expect(rows[1].isDeposit, isTrue);
-      // No suggestion offered, so the row waits for a human.
-      expect(rows[1].ledgerId, isNull);
-      expect(rows[1].isReady, isFalse);
+      // Nothing matched, so it is parked in Suspense — postable, but flagged.
+      expect(rows[1].ledgerId, isNotNull);
+      expect(rows[1].confident, isFalse);
+      expect(rows[1].needsReview, isTrue);
+      expect(rows[1].suggestionLabel, contains('Suspense'));
     });
 
-    test('a ledger the company does not have is kept as an unmatched hint',
+    test('a ledger the company does not have falls back to Suspense',
         () async {
       final ai = accountingWith([
         jsonEncode({
@@ -150,8 +152,40 @@ void main() {
       ]);
 
       final rows = await ai.extractBankRows(['/nonexistent/p.jpg']);
-      expect(rows.single.ledgerId, isNull);
-      expect(rows.single.unmatchedSuggestion, 'Fuel Expenses');
+      final row = rows.single;
+
+      // Assigned rather than abandoned, so the statement stays postable.
+      expect(row.ledgerId, isNotNull);
+      expect(row.isReady, isTrue);
+      expect(row.confident, isFalse);
+      // But the rejected guess is still named, so the user knows what happened.
+      expect(row.suggestionLabel, contains('Fuel Expenses'));
+
+      // A Suspense ledger is created when the company has none.
+      final ledgers = await StorageService.getLedgers();
+      final suspense = ledgers.firstWhere(
+          (l) => (l['classification'] as String? ?? '') == 'Suspense A/c');
+      expect(row.ledgerId, suspense['id']);
+    });
+
+    test('a narration matching a real ledger wins over Suspense', () async {
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [
+            {
+              'date': '2026-05-02',
+              'description': 'Monthly Rent transfer',
+              'amount': 4500,
+              'direction': 'withdrawal',
+              'ledger': '',
+            },
+          ],
+        }),
+      ]);
+
+      final rows = await ai.extractBankRows(['/nonexistent/p.jpg']);
+      expect(rows.single.ledgerId, rentLedgerId);
+      expect(rows.single.suggestionLabel, contains('narration'));
     });
 
     test('unusable rows are dropped rather than guessed at', () async {
@@ -321,6 +355,110 @@ void main() {
       expect(debit['ledger_id'], rentLedgerId);
       expect(credit['ledger_id'], bankLedgerId);
       expect((debit['debit'] as num).toDouble(), 4500);
+    });
+  });
+
+  group('chat history', () {
+    setUp(() => AiChatService().clearHistory());
+
+    test('a conversation survives closing and reopening the panel', () async {
+      final chat = AiChatService(
+        gemini: scriptedGemini([
+          jsonEncode({'intent': 'answer', 'reply': 'Rent was 4,500.'})
+        ]),
+        accounting: accountingWith([]),
+      );
+
+      final asked = ChatMessage(role: ChatRole.user, text: 'how much rent?');
+      await chat.remember(asked);
+      final reply = await chat.send(text: 'how much rent?', history: const []);
+      await chat.remember(reply);
+
+      // A freshly opened panel reads it back.
+      final restored = await AiChatService().loadHistory();
+      expect(restored, hasLength(2));
+      expect(restored.first.role, ChatRole.user);
+      expect(restored.first.text, 'how much rent?');
+      expect(restored.last.role, ChatRole.assistant);
+      expect(restored.last.text, contains('4,500'));
+    });
+
+    test('a restored draft is described, not offered again', () async {
+      final chat = AiChatService(
+        gemini: scriptedGemini([
+          jsonEncode({
+            'intent': 'voucher',
+            'reply': 'Drafted it.',
+            'voucher': {
+              'voucher_type': 'Payment',
+              'date': '2026-05-09',
+              'entries': [
+                {'ledger': 'Rent', 'debit': 4500, 'credit': 0},
+                {'ledger': 'Cash', 'debit': 0, 'credit': 4500},
+              ],
+            },
+          })
+        ]),
+        accounting: accountingWith([]),
+      );
+
+      final reply = await chat.send(text: 'paid 4500 rent', history: const []);
+      expect(reply.voucher, isNotNull);
+      await chat.remember(reply);
+
+      final restored = (await AiChatService().loadHistory()).last;
+      // The live draft is gone; what happened to it is not.
+      expect(restored.voucher, isNull);
+      expect(restored.hasDraft, isFalse);
+      expect(restored.settled, isTrue);
+      expect(restored.historyNote, contains('Payment voucher'));
+      expect(restored.historyNote, contains('not posted'));
+    });
+
+    test('settling a draft is reflected in the restored history', () async {
+      final chat = AiChatService(accounting: accountingWith([]));
+      final message = ChatMessage(
+        role: ChatRole.assistant,
+        text: 'Here is the entry.',
+        voucher: ProposedVoucher(
+          type: 'Payment',
+          date: DateTime(2026, 5, 9),
+          narration: '',
+          entries: [
+            ProposedEntry(
+                ledgerName: 'Rent', ledgerId: rentLedgerId, debit: 10, credit: 0),
+            ProposedEntry(
+                ledgerName: 'Rent', ledgerId: rentLedgerId, debit: 0, credit: 10),
+          ],
+        ),
+      );
+      await chat.remember(message);
+      await chat.rememberSettled(message);
+
+      final restored = (await AiChatService().loadHistory()).last;
+      expect(restored.historyNote, contains('posted'));
+      expect(restored.historyNote, isNot(contains('not posted')));
+    });
+
+    test('images sent with a message are remembered', () async {
+      final chat = AiChatService(accounting: accountingWith([]));
+      await chat.remember(ChatMessage(
+        role: ChatRole.user,
+        text: 'read this',
+        images: const ['/tmp/a.jpg', '/tmp/b.jpg'],
+      ));
+
+      final restored = (await AiChatService().loadHistory()).last;
+      expect(restored.images, ['/tmp/a.jpg', '/tmp/b.jpg']);
+    });
+
+    test('clearing wipes the conversation', () async {
+      final chat = AiChatService(accounting: accountingWith([]));
+      await chat.remember(ChatMessage(role: ChatRole.user, text: 'hello'));
+      expect(await chat.loadHistory(), isNotEmpty);
+
+      await chat.clearHistory();
+      expect(await chat.loadHistory(), isEmpty);
     });
   });
 
