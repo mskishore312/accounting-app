@@ -37,16 +37,34 @@ class GeminiTurn {
 class GeminiService {
   static const String apiKeySetting = 'gemini_api_key';
   static const String modelSetting = 'gemini_model';
-  static const String defaultModel = 'gemini-2.0-flash';
+  static const String defaultModel = 'gemini-3.6-flash';
   static const String _host = 'generativelanguage.googleapis.com';
 
-  /// Models offered in settings, cheapest/fastest first.
+  /// Generally available models offered in settings, newest first.
+  ///
+  /// Preview models are deliberately excluded: they can be withdrawn at short
+  /// notice, and this app has already been broken once by a model that went
+  /// away underneath it.
   static const List<String> availableModels = [
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-2.5-pro',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ];
+
+  /// Models Google has shut down or scheduled for shutdown.
+  ///
+  /// The 2.0 family was retired on 1 June 2026 and the 2.5 family retires on
+  /// 16 October 2026. A device still holding one of these in its settings
+  /// would fail every request, so [getModel] migrates it to [defaultModel].
+  static const Set<String> retiredModels = {
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-001',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-lite-001',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-pro',
+  };
 
   final http.Client _client;
 
@@ -57,8 +75,19 @@ class GeminiService {
   static Future<void> setApiKey(String key) =>
       StorageService.setSetting(apiKeySetting, key.trim());
 
-  static Future<String> getModel() async =>
-      (await StorageService.getSetting(modelSetting)) ?? defaultModel;
+  /// The model to use, upgrading away from any retired one.
+  ///
+  /// The migration is written back, so a device that was pinned to a dead
+  /// model recovers on its own and Settings shows the model actually in use.
+  static Future<String> getModel() async {
+    final stored = (await StorageService.getSetting(modelSetting))?.trim();
+    if (stored == null || stored.isEmpty) return defaultModel;
+    if (retiredModels.contains(stored)) {
+      await StorageService.setSetting(modelSetting, defaultModel);
+      return defaultModel;
+    }
+    return stored;
+  }
 
   static Future<void> setModel(String model) =>
       StorageService.setSetting(modelSetting, model);
@@ -264,6 +293,11 @@ class GeminiService {
         return 'Gemini rejected the request: $detail';
       case 403:
         return 'Gemini denied access. The key may lack permission: $detail';
+      case 404:
+        // Almost always a model that has been retired, which reads as a
+        // baffling "not found" unless the message says so.
+        return 'Gemini has no model by that name — it may have been retired. '
+            'Pick a different model in AI Settings. ($detail)';
       case 429:
         return 'Gemini rate limit reached. Try again in a moment.';
       case 503:

@@ -108,9 +108,53 @@ void main() {
       expect(await GeminiService.getApiKey(), 'test-key');
       expect(await GeminiService.getModel(), GeminiService.defaultModel);
 
-      await GeminiService.setModel('gemini-2.5-flash');
-      expect(await GeminiService.getModel(), 'gemini-2.5-flash');
+      // Any model still on offer must survive a round trip untouched.
+      final other = GeminiService.availableModels
+          .firstWhere((m) => m != GeminiService.defaultModel);
+      await GeminiService.setModel(other);
+      expect(await GeminiService.getModel(), other);
       await GeminiService.setModel(GeminiService.defaultModel);
+    });
+
+    test('a device pinned to a retired model is migrated off it', () async {
+      // What a phone that last ran the old build actually has stored.
+      await StorageService.setSetting(
+          GeminiService.modelSetting, 'gemini-2.0-flash');
+
+      expect(await GeminiService.getModel(), GeminiService.defaultModel);
+      // Written back, so Settings shows the model really in use.
+      expect(
+        await StorageService.getSetting(GeminiService.modelSetting),
+        GeminiService.defaultModel,
+      );
+    });
+
+    test('every retired model migrates, and none is still on offer', () async {
+      for (final retired in GeminiService.retiredModels) {
+        await StorageService.setSetting(GeminiService.modelSetting, retired);
+        expect(await GeminiService.getModel(), GeminiService.defaultModel,
+            reason: '$retired should not survive');
+      }
+      expect(
+        GeminiService.availableModels
+            .where(GeminiService.retiredModels.contains),
+        isEmpty,
+      );
+      expect(
+        GeminiService.retiredModels.contains(GeminiService.defaultModel),
+        isFalse,
+      );
+      await GeminiService.setModel(GeminiService.defaultModel);
+    });
+
+    test('a retired model reaching the API is explained, not just 404', () async {
+      final service = fakeGemini('models/gemini-2.0-flash is not found',
+          status: 404);
+      await expectLater(
+        service.generate(prompt: 'hi'),
+        throwsA(isA<GeminiException>()
+            .having((e) => e.message, 'message', contains('retired'))),
+      );
     });
 
     test('a missing key is reported as a config error', () async {
