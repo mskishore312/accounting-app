@@ -46,14 +46,20 @@ jobs:
       - name: Run tests
         run: flutter test
 
-      - name: Build APK (debug — faster)
-        run: flutter build apk --debug
+      # Release builds use the AOT engine and drop the debug JIT snapshots,
+      # and --split-per-abi emits one APK per architecture instead of bundling
+      # all of them. Together these take the download from ~120 MB to ~20 MB.
+      - name: Build APK
+        run: flutter build apk --release --split-per-abi
 
-      - name: Upload APK
+      - name: Report APK sizes
+        run: ls -lh build/app/outputs/flutter-apk/*.apk
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: accounting-app
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: build/app/outputs/flutter-apk/*-release.apk
 
       - name: Create Release
         continue-on-error: true   # never fail the build over a publish hiccup
@@ -61,7 +67,14 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
-          files: build/app/outputs/flutter-apk/app-debug.apk
+          body: |
+            Install **app-arm64-v8a-release.apk** on any phone from roughly 2017
+            onwards. Use app-armeabi-v7a-release.apk only for older 32-bit
+            devices; the x86_64 build is for emulators.
+
+            These are signed with a build-generated debug key, so uninstall any
+            previous copy before installing.
+          files: build/app/outputs/flutter-apk/*-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
