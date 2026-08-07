@@ -45,6 +45,38 @@ class ProposedVoucher {
   bool get isBalanced => (totalDebit - totalCredit).abs() < 0.005;
 }
 
+/// One line read off a bank statement, awaiting review.
+///
+/// Deliberately mutable: the review table edits these in place before any
+/// of them become vouchers.
+class ProposedBankRow {
+  DateTime date;
+  String description;
+  double amount;
+  bool isDeposit;
+  int? ledgerId;
+  String? ledgerName;
+
+  /// A ledger the model suggested that does not exist in this company.
+  /// Kept so the review table can explain why the row is unassigned.
+  final String? unmatchedSuggestion;
+
+  bool selected;
+
+  ProposedBankRow({
+    required this.date,
+    required this.description,
+    required this.amount,
+    required this.isDeposit,
+    this.ledgerId,
+    this.ledgerName,
+    this.unmatchedSuggestion,
+    this.selected = true,
+  });
+
+  bool get isReady => ledgerId != null && amount > 0;
+}
+
 /// Raised when the model's answer cannot be turned into a valid voucher.
 class AiDraftException implements Exception {
   final String message;
@@ -116,7 +148,7 @@ Rules you must follow:
 ''';
 
   /// Chart of accounts as a compact prompt block.
-  Future<String> _chartOfAccounts() async {
+  Future<String> chartOfAccountsBlock() async {
     final ledgers = await StorageService.getLedgers();
     if (ledgers.isEmpty) {
       throw const AiDraftException(
@@ -135,7 +167,7 @@ Rules you must follow:
     DateTime? today,
   }) async {
     final now = today ?? DateTime.now();
-    final chart = await _chartOfAccounts();
+    final chart = await chartOfAccountsBlock();
     final prompt = '''
 Chart of accounts:
 $chart
@@ -150,7 +182,7 @@ Transaction described by the user:
       systemInstruction: _systemInstruction,
       schema: _voucherSchema,
     );
-    return _validate(json, fallbackDate: now);
+    return validateDraft(json, fallbackDate: now);
   }
 
   /// Draft a voucher by reading a bill or receipt photo.
@@ -160,7 +192,7 @@ Transaction described by the user:
     String? hint,
   }) async {
     final now = today ?? DateTime.now();
-    final chart = await _chartOfAccounts();
+    final chart = await chartOfAccountsBlock();
     final prompt = '''
 Chart of accounts:
 $chart
@@ -179,7 +211,7 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
       images: [imagePath],
       schema: _voucherSchema,
     );
-    return _validate(json, fallbackDate: now);
+    return validateDraft(json, fallbackDate: now);
   }
 
   /// Answer a question about the books, grounded in the current numbers.
@@ -308,11 +340,160 @@ what is missing instead of guessing.
     });
   }
 
+  // --- bank statements ---
+
+  static final Map<String, dynamic> _bankRowsSchema = {
+    'type': 'OBJECT',
+    'properties': {
+      'rows': {
+        'type': 'ARRAY',
+        'items': {
+          'type': 'OBJECT',
+          'properties': {
+            'date': {'type': 'STRING', 'description': 'YYYY-MM-DD'},
+            'description': {'type': 'STRING'},
+            'amount': {'type': 'NUMBER'},
+            'direction': {
+              'type': 'STRING',
+              'enum': ['deposit', 'withdrawal'],
+            },
+            'ledger': {
+              'type': 'STRING',
+              'description':
+                  'Counterparty ledger from the chart of accounts, or "" if unsure',
+            },
+          },
+          'required': ['date', 'description', 'amount', 'direction'],
+        },
+      },
+      'notes': {'type': 'STRING'},
+    },
+    'required': ['rows'],
+  };
+
+  static const String _bankSystemInstruction = '''
+You read Indian bank statements and turn them into a table of transactions.
+
+Rules you must follow:
+- One row per transaction, in the order they appear on the statement.
+- "deposit" means money came into the account; "withdrawal" means it left.
+- Read the amount for the transaction itself, never the running balance.
+- Amounts are plain positive numbers, no currency symbols or separators.
+- Suggest a counterparty ledger only when the narration makes it reasonably
+  clear, using an exact name from the chart of accounts. Otherwise return an
+  empty string for "ledger" so a human chooses. Never invent a ledger name.
+- Do not include header rows, opening balance lines, or closing totals.
+''';
+
+  /// Read a bank statement image (or several pages) into editable rows.
+  ///
+  /// Nothing is validated as strictly as a voucher here: an unrecognised
+  /// ledger name leaves the row unassigned for the user to fix, because
+  /// rejecting a whole statement over one bad guess helps nobody.
+  Future<List<ProposedBankRow>> extractBankRows(
+    List<String> imagePaths, {
+    String? hint,
+  }) async {
+    if (imagePaths.isEmpty) {
+      throw const AiDraftException('Attach a statement image first.');
+    }
+    final chart = await chartOfAccountsBlock();
+    final prompt = '''
+Chart of accounts:
+$chart
+
+Read every transaction from the attached bank statement image(s).
+${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
+''';
+    final json = await _gemini.generateJson(
+      prompt: prompt,
+      systemInstruction: _bankSystemInstruction,
+      images: imagePaths,
+      schema: _bankRowsSchema,
+      timeout: const Duration(seconds: 90),
+    );
+
+    final ledgers = await StorageService.getLedgers();
+    final byName = {
+      for (final l in ledgers) (l['name'] as String).toLowerCase(): l,
+    };
+
+    final rows = <ProposedBankRow>[];
+    for (final raw in (json['rows'] as List<dynamic>? ?? const [])) {
+      final row = raw as Map<String, dynamic>;
+      final amount = _toAmount(row['amount']);
+      if (amount <= 0) continue;
+
+      DateTime? date;
+      try {
+        date = DateTime.parse((row['date'] as String).trim());
+      } catch (_) {
+        continue; // a row without a usable date cannot be posted
+      }
+
+      final suggested = (row['ledger'] as String?)?.trim() ?? '';
+      final ledger = suggested.isEmpty ? null : byName[suggested.toLowerCase()];
+
+      rows.add(ProposedBankRow(
+        date: date,
+        description: (row['description'] as String?)?.trim() ?? '',
+        amount: amount,
+        isDeposit: (row['direction'] as String?)?.toLowerCase() == 'deposit',
+        ledgerId: ledger?['id'] as int?,
+        ledgerName: ledger?['name'] as String?,
+        unmatchedSuggestion: ledger == null && suggested.isNotEmpty
+            ? suggested
+            : null,
+      ));
+    }
+
+    if (rows.isEmpty) {
+      throw const AiDraftException(
+          'No transactions could be read from that image. Try a sharper photo '
+          'showing the date, narration and amount columns.');
+    }
+    return rows;
+  }
+
+  /// Post reviewed statement rows against [bankLedgerId]. All or nothing.
+  Future<int> postBankRows({
+    required int bankLedgerId,
+    required List<ProposedBankRow> rows,
+  }) async {
+    final selected = rows.where((r) => r.selected).toList();
+    if (selected.isEmpty) {
+      throw const AiDraftException('No rows are selected.');
+    }
+    if (selected.any((r) => r.ledgerId == null)) {
+      throw const AiDraftException(
+          'Every selected row needs a counterparty ledger.');
+    }
+    if (selected.any((r) => r.ledgerId == bankLedgerId)) {
+      throw const AiDraftException(
+          'A row cannot use the bank ledger as its own counterparty.');
+    }
+    if (selected.any((r) => r.amount <= 0)) {
+      throw const AiDraftException('Every selected row needs an amount above zero.');
+    }
+    return StorageService.importBankStatementTransactions(
+      bankLedgerId: bankLedgerId,
+      transactions: selected
+          .map((r) => {
+                'voucher_date': _iso(r.date),
+                'description': r.description,
+                'amount': r.amount,
+                'is_deposit': r.isDeposit,
+                'counterpart_ledger_id': r.ledgerId,
+              })
+          .toList(),
+    );
+  }
+
   // --- validation ---
 
   /// Turns the model's JSON into a draft, rejecting anything that would
   /// corrupt the books: unknown ledgers, bad numbers, unbalanced entries.
-  Future<ProposedVoucher> _validate(
+  Future<ProposedVoucher> validateDraft(
     Map<String, dynamic> json, {
     required DateTime fallbackDate,
   }) async {

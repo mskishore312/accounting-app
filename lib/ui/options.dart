@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:accounting_app/ui/vouchers.dart';
 import 'package:accounting_app/ui/reports.dart';
-import 'package:accounting_app/ui/ai_assistant.dart';
+import 'package:accounting_app/ui/widgets/ai_chat_sheet.dart';
 import 'package:accounting_app/data/storage_service.dart';
 import 'package:accounting_app/ui/master_options.dart';
 import 'package:accounting_app/ui/gateway.dart';
@@ -214,14 +214,7 @@ class _OptionsState extends State<Options> {
                       const SizedBox(height: 24),
                       _buildButton(
                         'AI Assistant',
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const AiAssistant(),
-                            ),
-                          );
-                        },
+                        onPressed: () => AiChatSheet.show(context),
                       ),
                     ],
                   ),

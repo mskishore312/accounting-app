@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:accounting_app/ui/gateway.dart';
 import 'package:accounting_app/ui/options.dart';
+import 'package:accounting_app/ui/widgets/ai_chat_launcher.dart';
 import 'data/storage_service.dart';
 import 'dart:io' show Platform;
 
@@ -66,6 +67,15 @@ class MyApp extends StatelessWidget {
         ),
       ),
       debugShowCheckedModeBanner: false,
+      navigatorKey: appNavigatorKey,
+      // The launcher is installed above the Navigator so the assistant is
+      // reachable from every screen without each screen knowing about it.
+      builder: (context, child) => Stack(
+        children: [
+          if (child != null) child,
+          const AiChatLauncher(),
+        ],
+      ),
       home: const AppRouter(),
       ),
     );

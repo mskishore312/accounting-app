@@ -17,6 +17,19 @@ class GeminiException implements Exception {
   String toString() => message;
 }
 
+/// One earlier turn of a conversation, replayed to give the model context.
+class GeminiTurn {
+  final bool fromUser;
+  final String text;
+  final List<String> images;
+
+  const GeminiTurn({
+    required this.fromUser,
+    required this.text,
+    this.images = const [],
+  });
+}
+
 /// Minimal client for the Gemini generative language REST API.
 ///
 /// The key is supplied by the user and kept in local app settings; it is
@@ -57,10 +70,12 @@ class GeminiService {
 
   /// Raw text generation. [images] are local file paths sent inline.
   /// When [jsonSchema] is given the model is asked for JSON matching it.
+  /// [history] replays earlier turns so the model can follow a conversation.
   Future<String> generate({
     required String prompt,
     String? systemInstruction,
     List<String> images = const [],
+    List<GeminiTurn> history = const [],
     Map<String, dynamic>? jsonSchema,
     double temperature = 0.2,
     Duration timeout = const Duration(seconds: 45),
@@ -74,24 +89,20 @@ class GeminiService {
     }
     final model = await getModel();
 
-    final parts = <Map<String, dynamic>>[
-      {'text': prompt},
-    ];
-    for (final path in images) {
-      final file = File(path);
-      if (!await file.exists()) continue;
-      parts.add({
-        'inline_data': {
-          'mime_type': _mimeTypeFor(path),
-          'data': base64Encode(await file.readAsBytes()),
-        }
+    final contents = <Map<String, dynamic>>[];
+    for (final turn in history) {
+      contents.add({
+        'role': turn.fromUser ? 'user' : 'model',
+        'parts': await _buildParts(turn.text, turn.images),
       });
     }
+    contents.add({
+      'role': 'user',
+      'parts': await _buildParts(prompt, images),
+    });
 
     final body = <String, dynamic>{
-      'contents': [
-        {'parts': parts}
-      ],
+      'contents': contents,
       'generationConfig': {
         'temperature': temperature,
         if (jsonSchema != null) 'responseMimeType': 'application/json',
@@ -150,15 +161,19 @@ class GeminiService {
     required String prompt,
     String? systemInstruction,
     List<String> images = const [],
+    List<GeminiTurn> history = const [],
     required Map<String, dynamic> schema,
     double temperature = 0.1,
+    Duration timeout = const Duration(seconds: 45),
   }) async {
     final raw = await generate(
       prompt: prompt,
       systemInstruction: systemInstruction,
       images: images,
+      history: history,
       jsonSchema: schema,
       temperature: temperature,
+      timeout: timeout,
     );
     try {
       final cleaned = _stripCodeFence(raw);
@@ -185,6 +200,28 @@ class GeminiService {
   void dispose() => _client.close();
 
   // --- helpers ---
+
+  /// Text plus any readable images, as Gemini content parts. Images that no
+  /// longer exist on disk are skipped rather than failing the whole request.
+  static Future<List<Map<String, dynamic>>> _buildParts(
+    String text,
+    List<String> images,
+  ) async {
+    final parts = <Map<String, dynamic>>[
+      {'text': text},
+    ];
+    for (final path in images) {
+      final file = File(path);
+      if (!await file.exists()) continue;
+      parts.add({
+        'inline_data': {
+          'mime_type': _mimeTypeFor(path),
+          'data': base64Encode(await file.readAsBytes()),
+        }
+      });
+    }
+    return parts;
+  }
 
   static String _stripCodeFence(String text) {
     var t = text.trim();

@@ -1,0 +1,633 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+
+import 'package:accounting_app/services/ai_accounting_service.dart';
+import 'package:accounting_app/services/ai_chat_service.dart';
+import 'package:accounting_app/services/gemini_service.dart';
+import 'package:accounting_app/services/period_service.dart';
+import 'package:accounting_app/ui/ai_settings.dart';
+import 'package:accounting_app/ui/bank_rows_review.dart';
+
+const Color _kGreen = Color(0xFF2C5545);
+
+/// The assistant panel, opened from the floating button on any screen.
+///
+/// Holds a conversation, takes photos, and offers drafts the user confirms.
+/// Nothing here writes to the books directly — posting always goes through
+/// [AiAccountingService] after an explicit confirmation.
+class AiChatSheet extends StatefulWidget {
+  const AiChatSheet({super.key});
+
+  /// Opens the panel as a draggable sheet.
+  static Future<void> show(BuildContext context) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const AiChatSheet(),
+    );
+  }
+
+  @override
+  State<AiChatSheet> createState() => _AiChatSheetState();
+}
+
+class _AiChatSheetState extends State<AiChatSheet> {
+  final _service = AiChatService();
+  final _input = TextEditingController();
+  final _picker = ImagePicker();
+
+  /// Owned by [DraggableScrollableSheet]; using it for the message list is
+  /// what lets the user drag the panel down from anywhere in the list.
+  ScrollController? _scroll;
+
+  final List<ChatMessage> _messages = [];
+  final List<String> _pending = [];
+
+  bool _busy = false;
+  bool _configured = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkConfig();
+  }
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkConfig() async {
+    final ok = await GeminiService.isConfigured();
+    if (mounted) setState(() => _configured = ok);
+  }
+
+  void _scrollToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final scroll = _scroll;
+      if (scroll == null || !scroll.hasClients) return;
+      scroll.animateTo(
+        scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  Future<void> _send() async {
+    final text = _input.text.trim();
+    if (text.isEmpty && _pending.isEmpty) return;
+    if (_busy) return;
+
+    final images = List<String>.from(_pending);
+    final history = List<ChatMessage>.from(_messages);
+
+    setState(() {
+      _messages.add(ChatMessage(
+        role: ChatRole.user,
+        text: text,
+        images: images,
+      ));
+      _input.clear();
+      _pending.clear();
+      _busy = true;
+    });
+    _scrollToEnd();
+
+    final period = Provider.of<PeriodService>(context, listen: false);
+    try {
+      final reply = await _service.send(
+        text: text.isEmpty ? 'Read the attached image.' : text,
+        images: images,
+        history: history,
+        startDate: period.startDate,
+        endDate: period.endDate,
+      );
+      if (!mounted) return;
+      setState(() => _messages.add(reply));
+    } on AiDraftException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+    } on GeminiException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+      if (e.isConfigError) _checkConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error('Something went wrong: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _scrollToEnd();
+    }
+  }
+
+  ChatMessage _error(String message) =>
+      ChatMessage(role: ChatRole.assistant, text: message);
+
+  Future<void> _attach(ImageSource source) async {
+    try {
+      if (source == ImageSource.gallery) {
+        final picked = await _picker.pickMultiImage(imageQuality: 85, maxWidth: 2000);
+        if (picked.isEmpty || !mounted) return;
+        setState(() => _pending.addAll(picked.map((f) => f.path)));
+      } else {
+        final picked = await _picker.pickImage(
+            source: source, imageQuality: 85, maxWidth: 2000);
+        if (picked == null || !mounted) return;
+        setState(() => _pending.add(picked.path));
+      }
+    } catch (e) {
+      if (mounted) setState(() => _messages.add(_error('Could not attach: $e')));
+    }
+  }
+
+  void _attachMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: _kGreen),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _attach(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: _kGreen),
+              title: const Text('Choose images'),
+              subtitle: const Text('Bills, receipts or bank statement pages'),
+              onTap: () {
+                Navigator.pop(context);
+                _attach(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _postVoucher(ChatMessage message) async {
+    final draft = message.voucher;
+    if (draft == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await _service.accounting.postVoucher(draft);
+      _service.invalidateBooks();
+      if (!mounted) return;
+      setState(() {
+        message.settled = true;
+        _messages.add(ChatMessage(
+          role: ChatRole.assistant,
+          text: 'Posted. The ${draft.type} voucher is in the books.',
+        ));
+      });
+    } on AiDraftException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error('Could not post: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _scrollToEnd();
+    }
+  }
+
+  Future<void> _reviewRows(ChatMessage message) async {
+    final rows = message.bankRows;
+    if (rows == null) return;
+    final posted = await Navigator.push<int>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BankRowsReview(
+          rows: rows,
+          service: _service.accounting,
+        ),
+      ),
+    );
+    if (posted == null || !mounted) return;
+    _service.invalidateBooks();
+    setState(() {
+      message.settled = true;
+      _messages.add(ChatMessage(
+        role: ChatRole.assistant,
+        text: 'Posted $posted transaction(s) from the statement.',
+      ));
+    });
+    _scrollToEnd();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (_, sheetScroll) {
+        _scroll = sheetScroll;
+        return Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFFE0F2E9),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: Column(
+          children: [
+            _header(),
+            if (!_configured) _configBanner(),
+            Expanded(
+              child: _messages.isEmpty
+                  ? _emptyState(sheetScroll)
+                  : ListView.builder(
+                      controller: sheetScroll,
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _messages.length,
+                      itemBuilder: (_, i) => _bubble(_messages[i]),
+                    ),
+            ),
+            if (_busy) const LinearProgressIndicator(minHeight: 2),
+            _composer(),
+          ],
+        ),
+        );
+      },
+    );
+  }
+
+  Widget _header() => Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+        decoration: const BoxDecoration(
+          color: _kGreen,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'AI Assistant',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.settings, color: Colors.white, size: 20),
+              tooltip: 'AI Settings',
+              onPressed: () async {
+                await Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const AiSettings()));
+                _checkConfig();
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ],
+        ),
+      );
+
+  Widget _configBanner() => Container(
+        width: double.infinity,
+        color: Colors.amber.shade50,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'No Gemini API key yet — add one to use the assistant.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                await Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const AiSettings()));
+                _checkConfig();
+              },
+              child: const Text('Add key'),
+            ),
+          ],
+        ),
+      );
+
+  Widget _emptyState(ScrollController controller) => ListView(
+        controller: controller,
+        padding: const EdgeInsets.all(24),
+        children: [
+          const SizedBox(height: 20),
+          const Icon(Icons.auto_awesome, size: 40, color: _kGreen),
+          const SizedBox(height: 12),
+          const Text(
+            'Ask about your books, describe an entry, or attach a photo.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: _kGreen, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 20),
+          ...[
+            'paid 4500 shop rent by cash',
+            'what is my net profit this period?',
+            'attach a bank statement photo to import transactions',
+            'photograph a bill to draft a purchase entry',
+          ].map(
+            (example) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('• ', style: TextStyle(color: _kGreen)),
+                  Expanded(
+                    child: Text(example,
+                        style: TextStyle(
+                            fontSize: 13, color: Colors.grey.shade700)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+
+  Widget _bubble(ChatMessage message) {
+    final isUser = message.role == ChatRole.user;
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width * 0.85,
+        ),
+        decoration: BoxDecoration(
+          color: isUser ? _kGreen : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _kGreen.withOpacity(0.3)),
+        ),
+        child: Column(
+          crossAxisAlignment:
+              isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            if (message.images.isNotEmpty) _thumbnails(message.images),
+            if (message.text.isNotEmpty)
+              SelectableText(
+                message.text,
+                style: TextStyle(color: isUser ? Colors.white : Colors.black87),
+              ),
+            if (message.voucher != null) _voucherCard(message),
+            if (message.bankRows != null) _rowsCard(message),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _thumbnails(List<String> paths) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: paths
+              .map((p) => ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.file(
+                      File(p),
+                      width: 64,
+                      height: 64,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox(
+                        width: 64,
+                        height: 64,
+                        child: Icon(Icons.broken_image, size: 20),
+                      ),
+                    ),
+                  ))
+              .toList(),
+        ),
+      );
+
+  Widget _voucherCard(ChatMessage message) {
+    final draft = message.voucher!;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE0F2E9),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _kGreen),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${draft.type} • ${draft.date.day.toString().padLeft(2, '0')}/'
+            '${draft.date.month.toString().padLeft(2, '0')}/${draft.date.year}',
+            style: const TextStyle(fontWeight: FontWeight.bold, color: _kGreen),
+          ),
+          const Divider(height: 12),
+          ...draft.entries.map(
+            (e) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                      child: Text(e.ledgerName,
+                          style: const TextStyle(fontSize: 13))),
+                  Text(
+                    e.debit > 0
+                        ? '${e.debit.toStringAsFixed(2)} Dr'
+                        : '${e.credit.toStringAsFixed(2)} Cr',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (draft.narration.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(draft.narration,
+                style: const TextStyle(
+                    fontSize: 12, fontStyle: FontStyle.italic)),
+          ],
+          for (final warning in draft.warnings)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 14, color: Colors.amber.shade800),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(warning,
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.amber.shade900)),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          if (message.settled)
+            const Text('Posted',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: _kGreen,
+                    fontWeight: FontWeight.bold))
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _kGreen,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: _busy ? null : () => _postVoucher(message),
+                    child: const Text('Post'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() => message.settled = true),
+                    child: const Text('Discard'),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _rowsCard(ChatMessage message) {
+    final rows = message.bankRows!;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE0F2E9),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _kGreen),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${rows.length} transactions read',
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold, color: _kGreen)),
+          const SizedBox(height: 4),
+          Text(
+            '${rows.where((r) => r.ledgerId == null).length} still need a ledger.',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 8),
+          if (message.settled)
+            const Text('Posted',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: _kGreen,
+                    fontWeight: FontWeight.bold))
+          else
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _kGreen,
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _busy ? null : () => _reviewRows(message),
+                icon: const Icon(Icons.table_rows, size: 16),
+                label: const Text('Review in table'),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _composer() {
+    return SafeArea(
+      top: false,
+      child: Container(
+        color: Colors.white,
+        padding: EdgeInsets.only(
+          left: 8,
+          right: 8,
+          top: 8,
+          bottom: MediaQuery.viewInsetsOf(context).bottom + 8,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_pending.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Wrap(
+                    spacing: 4,
+                    children: _pending
+                        .map((p) => Chip(
+                              visualDensity: VisualDensity.compact,
+                              avatar: const Icon(Icons.image, size: 16),
+                              label: Text(
+                                p.split('/').last,
+                                style: const TextStyle(fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onDeleted: () =>
+                                  setState(() => _pending.remove(p)),
+                            ))
+                        .toList(),
+                  ),
+                ),
+              ),
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.add_photo_alternate, color: _kGreen),
+                  tooltip: 'Attach an image',
+                  onPressed: _busy ? null : _attachMenu,
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.newline,
+                    decoration: const InputDecoration(
+                      hintText: 'Ask, or describe an entry…',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.send, color: _kGreen),
+                  onPressed: _busy ? null : _send,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
