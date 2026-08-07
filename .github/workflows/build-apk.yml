@@ -61,6 +61,18 @@ jobs:
           name: accounting-app
           path: build/app/outputs/flutter-apk/*-release.apk
 
+      # Chrome on Android refuses downloads served as
+      # application/vnd.android.package-archive: it fetches the whole file and
+      # then discards it. A .zip copy is not special-cased, so it downloads
+      # normally and can be extracted on the phone.
+      - name: Zip APKs for browsers that block .apk downloads
+        run: |
+          cd build/app/outputs/flutter-apk
+          for apk in *-release.apk; do
+            zip -j "${apk}.zip" "$apk"
+          done
+          ls -lh *.zip
+
       - name: Create Release
         continue-on-error: true   # never fail the build over a publish hiccup
         uses: softprops/action-gh-release@v1
@@ -72,9 +84,15 @@ jobs:
             onwards. Use app-armeabi-v7a-release.apk only for older 32-bit
             devices; the x86_64 build is for emulators.
 
+            If your browser refuses the .apk download — Chrome on Android
+            fetches it fully and then discards it — grab the matching **.zip**
+            instead and extract it on the phone.
+
             These are signed with a build-generated debug key, so uninstall any
             previous copy before installing.
-          files: build/app/outputs/flutter-apk/*-release.apk
+          files: |
+            build/app/outputs/flutter-apk/*-release.apk
+            build/app/outputs/flutter-apk/*-release.apk.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
