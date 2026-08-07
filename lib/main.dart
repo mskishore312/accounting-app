@@ -70,9 +70,14 @@ class MyApp extends StatelessWidget {
       navigatorKey: appNavigatorKey,
       // The launcher is installed above the Navigator so the assistant is
       // reachable from every screen without each screen knowing about it.
+      //
+      // Positioned.fill matters: a Stack lays out non-positioned children
+      // with loose constraints, which would let every screen size to its
+      // natural height instead of the viewport and overflow. This keeps the
+      // app content on exactly the tight constraints it had before.
       builder: (context, child) => Stack(
         children: [
-          if (child != null) child,
+          if (child != null) Positioned.fill(child: child),
           const AiChatLauncher(),
         ],
       ),
