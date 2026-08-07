@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:intl/intl.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
@@ -43,19 +42,6 @@ class BankStatementService {
       return parseExtractedText(text);
     } finally {
       document.dispose();
-    }
-  }
-
-  static Future<List<BankStatementTransaction>> extractImageTransactions(
-    String filePath,
-  ) async {
-    final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-    try {
-      final inputImage = InputImage.fromFilePath(filePath);
-      final result = await recognizer.processImage(inputImage);
-      return parseExtractedText(result.text);
-    } finally {
-      await recognizer.close();
     }
   }
 

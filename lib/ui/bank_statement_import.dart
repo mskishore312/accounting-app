@@ -57,7 +57,7 @@ class _BankStatementImportState extends State<BankStatementImport> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: const ['pdf', 'png', 'jpg', 'jpeg'],
+        allowedExtensions: const ['pdf'],
         withData: true,
       );
       if (result == null) return;
@@ -68,16 +68,8 @@ class _BankStatementImportState extends State<BankStatementImport> {
       if (bytes == null && selectedFile.path != null) {
         bytes = await File(selectedFile.path!).readAsBytes();
       }
-      final extension = selectedFile.extension?.toLowerCase();
-      late final List<BankStatementTransaction> extracted;
-      if (extension == 'pdf') {
-        if (bytes == null) throw Exception('Could not read the selected PDF');
-        extracted = BankStatementService.extractTransactions(bytes);
-      } else {
-        final path = selectedFile.path;
-        if (path == null) throw Exception('Could not access the selected image');
-        extracted = await BankStatementService.extractImageTransactions(path);
-      }
+      if (bytes == null) throw Exception('Could not read the selected PDF');
+      final extracted = BankStatementService.extractTransactions(bytes);
       BankStatementService.suggestLedgers(
         extracted,
         ledgers,
@@ -327,7 +319,7 @@ class _BankStatementImportState extends State<BankStatementImport> {
                         icon: const Icon(Icons.document_scanner),
                         label: Text(
                           fileName == null
-                              ? 'Import PDF or Statement Image'
+                              ? 'Import Statement PDF'
                               : 'Import Another Statement',
                         ),
                       ),
@@ -349,7 +341,10 @@ class _BankStatementImportState extends State<BankStatementImport> {
                           child: Padding(
                             padding: EdgeInsets.all(24),
                             child: Text(
-                              'Select the bank ledger, then import a PDF or a clear JPG/PNG statement image. Review every suggestion before posting.',
+                              'Select the bank ledger, then import a statement PDF. '
+                              'Review every suggestion before posting.\n\n'
+                              'For a photo or scan of a statement, use the AI '
+                              'assistant button instead — it reads images.',
                               textAlign: TextAlign.center,
                               style: TextStyle(color: Color(0xFF2C5545)),
                             ),
