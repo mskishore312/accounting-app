@@ -347,14 +347,111 @@ void main() {
       expect(receipts, hasLength(1));
 
       // Money leaving the bank credits the bank and debits the expense.
-      final entries =
+      final paidEntries =
           await StorageService.getVoucherEntries(payments.single['id'] as int);
-      expect(entries, hasLength(2));
-      final debit = entries.firstWhere((e) => (e['debit'] as num) > 0);
-      final credit = entries.firstWhere((e) => (e['credit'] as num) > 0);
-      expect(debit['ledger_id'], rentLedgerId);
-      expect(credit['ledger_id'], bankLedgerId);
-      expect((debit['debit'] as num).toDouble(), 4500);
+      expect(paidEntries, hasLength(2));
+      final paidDebit = paidEntries.firstWhere((e) => (e['debit'] as num) > 0);
+      final paidCredit =
+          paidEntries.firstWhere((e) => (e['credit'] as num) > 0);
+      expect(paidDebit['ledger_id'], rentLedgerId);
+      expect(paidCredit['ledger_id'], bankLedgerId,
+          reason: 'a payment must credit the bank');
+      expect((paidDebit['debit'] as num).toDouble(), 4500);
+
+      // And money arriving debits the bank, the other way round.
+      final gotEntries =
+          await StorageService.getVoucherEntries(receipts.single['id'] as int);
+      final gotDebit = gotEntries.firstWhere((e) => (e['debit'] as num) > 0);
+      final gotCredit = gotEntries.firstWhere((e) => (e['credit'] as num) > 0);
+      expect(gotDebit['ledger_id'], bankLedgerId,
+          reason: 'a receipt must debit the bank');
+      expect(gotCredit['ledger_id'], rentLedgerId);
+      expect((gotDebit['debit'] as num).toDouble(), 1000);
+    });
+
+    test('a row using the bank ledger on both sides is refused by name',
+        () async {
+      final ai = accountingWith([]);
+      await expectLater(
+        ai.postBankRows(
+          bankLedgerId: bankLedgerId,
+          rows: [
+            ProposedBankRow(
+              date: DateTime(2026, 5, 6),
+              description: 'Cash withdrawal',
+              amount: 100,
+              isDeposit: false,
+              ledgerId: bankLedgerId,
+              ledgerName: 'HDFC Bank',
+            )
+          ],
+        ),
+        throwsA(isA<AiDraftException>()
+            .having((e) => e.message, 'message', contains('HDFC Bank'))
+            .having((e) => e.message, 'message', contains('both sides'))),
+      );
+    });
+  });
+
+  group('creating a ledger mid-review', () {
+    test('a new ledger is adopted by the row that needed it', () async {
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [
+            {
+              'date': '2026-05-02',
+              'description': 'Diesel for the van',
+              'amount': 800,
+              'direction': 'withdrawal',
+              'ledger': 'Fuel Expenses',
+            },
+          ],
+        }),
+      ]);
+
+      final row = (await ai.extractBankRows(['/nonexistent/p.jpg'])).single;
+      // The name the model wanted is kept, so the create form can offer it.
+      expect(row.modelSuggestedName, 'Fuel Expenses');
+      expect(row.confident, isFalse);
+
+      // What the create dialog does on save.
+      final company = await StorageService.getSelectedCompany();
+      final id = await StorageService.saveLedger({
+        'company_id': company!['id'],
+        'name': 'Fuel Expenses',
+        'classification': 'Indirect Expenses',
+        'balance': 0.0,
+      });
+      row.chooseLedger(id, 'Fuel Expenses');
+
+      expect(row.ledgerId, id);
+      expect(row.ledgerName, 'Fuel Expenses');
+      expect(row.suggestionLabel, 'Chosen by you');
+      expect(row.confident, isTrue);
+      expect(row.needsReview, isFalse);
+      expect(row.isReady, isTrue);
+    });
+
+    test('a ledger created mid-review can be posted against', () async {
+      final ai = accountingWith([]);
+      final company = await StorageService.getSelectedCompany();
+      final id = await StorageService.saveLedger({
+        'company_id': company!['id'],
+        'name': 'Courier Charges',
+        'classification': 'Indirect Expenses',
+        'balance': 0.0,
+      });
+
+      final row = ProposedBankRow(
+        date: DateTime(2026, 5, 11),
+        description: 'BLUEDART',
+        amount: 320,
+        isDeposit: false,
+      )..chooseLedger(id, 'Courier Charges');
+
+      final posted =
+          await ai.postBankRows(bankLedgerId: bankLedgerId, rows: [row]);
+      expect(posted, 1);
     });
   });
 

@@ -26,6 +26,7 @@ void main() {
   late Directory tempDir;
   late int companyId;
   late int rentLedgerId;
+  late int bankLedgerId;
 
   void useTestSurface(WidgetTester tester) {
     tester.view.physicalSize = const Size(1080, 2340);
@@ -90,7 +91,7 @@ void main() {
       'books_from': '01/04/2026',
     });
     await StorageService.selectCompany(companyId);
-    await StorageService.saveLedger({
+    bankLedgerId = await StorageService.saveLedger({
       'company_id': companyId,
       'name': 'HDFC Bank',
       'classification': 'Bank Accounts',
@@ -286,6 +287,80 @@ void main() {
       await tester.tap(find.text('Received').last);
       await tester.pump();
       expect(data.any((r) => r.isDeposit), isTrue);
+    });
+
+    // The bug a real 36-row statement hit: extraction matched some rows to
+    // the Cash ledger, that ledger was then auto-selected as the bank side
+    // because it was the only one, and Post refused the whole batch.
+    testWidgets('auto-selecting the bank ledger releases rows matched to it',
+        (tester) async {
+      useTestSurface(tester);
+      final data = [
+        ProposedBankRow(
+          date: DateTime(2026, 5, 2),
+          description: 'ATM cash withdrawal',
+          amount: 2000,
+          isDeposit: false,
+          ledgerId: bankLedgerId,
+          ledgerName: 'HDFC Bank',
+          suggestionLabel: 'Suggested from narration',
+        ),
+      ];
+      await tester.pumpWidget(bare(BankRowsReview(
+        rows: data,
+        service: AiAccountingService(),
+      )));
+      await drainDb(tester);
+
+      // Freed rather than left pointing at both sides of its own voucher.
+      expect(data.single.ledgerId, isNull);
+      expect(data.single.confident, isFalse);
+      expect(find.textContaining('Same as the bank ledger'), findsOneWidget);
+    });
+
+    // Only the entry points are driven through the UI. Actually completing the
+    // create flow means unwinding a dialog inside a sheet around a real-async
+    // database write, which the widget-test clock cannot drive reliably; the
+    // logic behind it is covered directly in ai_chat_test.dart instead.
+    testWidgets('a ledger can be created from the counterparty picker',
+        (tester) async {
+      useTestSurface(tester);
+      await tester.pumpWidget(bare(BankRowsReview(
+        rows: rows(),
+        service: AiAccountingService(),
+      )));
+      await drainDb(tester);
+
+      // No pumpAndSettle: the picker autofocuses a field whose cursor blinks
+      // forever, which is an animation that never settles.
+      await tester.tap(find.text('Choose ledger'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Create a new ledger'), findsOneWidget);
+    });
+
+    testWidgets('a bank or cash ledger can be created beside the dropdown',
+        (tester) async {
+      useTestSurface(tester);
+      await tester.pumpWidget(bare(BankRowsReview(
+        rows: rows(),
+        service: AiAccountingService(),
+      )));
+      await drainDb(tester);
+
+      final plus = find.descendant(
+        of: find.byType(IconButton),
+        matching: find.byIcon(Icons.add),
+      );
+      expect(plus, findsOneWidget);
+
+      await tester.tap(plus);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('New ledger'), findsOneWidget);
+      expect(find.text('Under group'), findsOneWidget);
     });
 
     testWidgets('editing an amount is written back to the row', (tester) async {

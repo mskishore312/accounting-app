@@ -61,6 +61,11 @@ class ProposedBankRow {
   /// Why this counterparty was chosen, shown next to it in the review table.
   String suggestionLabel;
 
+  /// A ledger name the model proposed that this company does not have.
+  /// Kept so "create a new ledger" can offer it pre-filled, which is usually
+  /// exactly the account that is missing.
+  String? modelSuggestedName;
+
   /// True only for a guess strong enough that it does not need a second look.
   /// Suspense is never confident.
   bool confident;
@@ -75,6 +80,7 @@ class ProposedBankRow {
     this.ledgerId,
     this.ledgerName,
     this.suggestionLabel = '',
+    this.modelSuggestedName,
     this.confident = false,
     this.selected = true,
   });
@@ -496,6 +502,7 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
         ledgerId: suggestion.ledger?['id'] as int?,
         ledgerName: suggestion.ledger?['name'] as String?,
         suggestionLabel: label,
+        modelSuggestedName: named.isEmpty ? null : named,
         confident: suggestion.confident,
       ));
     }
@@ -560,13 +567,19 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
     if (selected.isEmpty) {
       throw const AiDraftException('No rows are selected.');
     }
-    if (selected.any((r) => r.ledgerId == null)) {
-      throw const AiDraftException(
-          'Every selected row needs a counterparty ledger.');
+    final unassigned = selected.where((r) => r.ledgerId == null).length;
+    if (unassigned > 0) {
+      throw AiDraftException(
+          '$unassigned selected row(s) still need a counterparty ledger. '
+          'Tap the ledger on each one to choose or create it.');
     }
-    if (selected.any((r) => r.ledgerId == bankLedgerId)) {
-      throw const AiDraftException(
-          'A row cannot use the bank ledger as its own counterparty.');
+    final clashing = selected.where((r) => r.ledgerId == bankLedgerId).toList();
+    if (clashing.isNotEmpty) {
+      throw AiDraftException(
+          '${clashing.length} row(s) use the same ledger on both sides — a '
+          'voucher cannot debit and credit "${clashing.first.ledgerName}". '
+          'Give those rows a different counterparty, or pick another bank '
+          'ledger for the statement.');
     }
     if (selected.any((r) => r.amount <= 0)) {
       throw const AiDraftException('Every selected row needs an amount above zero.');

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'package:accounting_app/data/storage_service.dart';
+import 'package:accounting_app/ledger_classifications.dart';
 import 'package:accounting_app/services/ai_accounting_service.dart';
 
 const Color _kGreen = Color(0xFF2C5545);
@@ -77,8 +78,66 @@ class _BankRowsReviewState extends State<BankRowsReview> {
       _ledgers = ledgers;
       _loading = false;
       final banks = _bankLedgers;
-      if (banks.length == 1) _bankLedgerId = banks.first['id'] as int;
+      // Auto-select must go through the same path as the dropdown, or rows
+      // that matched this ledger during extraction stay pointed at it and
+      // block the whole batch at Post time.
+      if (banks.length == 1) _setBankLedger(banks.first['id'] as int);
     });
+  }
+
+  /// Point the statement at a bank ledger, releasing any row that had been
+  /// matched to it. A row cannot be both sides of its own voucher, and
+  /// narration matching does not know which ledger will be picked here.
+  void _setBankLedger(int? id) {
+    _bankLedgerId = id;
+    if (id == null) return;
+    for (final row in widget.rows) {
+      if (row.ledgerId != id) continue;
+      row.ledgerId = null;
+      row.ledgerName = null;
+      row.confident = false;
+      row.suggestionLabel = 'Same as the bank ledger — choose another';
+    }
+  }
+
+  /// All ledger groups, with the most likely counterparties first.
+  static final List<String> _allGroups = () {
+    const preferred = [
+      'Indirect Expenses',
+      'Direct Expenses',
+      'Sundry Creditors',
+      'Sundry Debtors',
+      'Indirect Income',
+      'Sales Accounts',
+      'Purchase Accounts',
+    ];
+    final rest = LedgerClassifications.groupClassifications.keys
+        .where((g) => !preferred.contains(g))
+        .toList()
+      ..sort();
+    return [...preferred, ...rest];
+  }();
+
+  /// Create a ledger inline and adopt it immediately.
+  Future<Map<String, dynamic>?> _createLedger({
+    required List<String> groups,
+    required String initialGroup,
+    String? suggestedName,
+  }) async {
+    final created = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => _CreateLedgerDialog(
+        existing: _ledgers,
+        groups: groups,
+        initialGroup: initialGroup,
+        suggestedName: suggestedName,
+      ),
+    );
+    if (created == null || !mounted) return null;
+    final ledgers = await StorageService.getLedgers();
+    if (!mounted) return created;
+    setState(() => _ledgers = ledgers);
+    return created;
   }
 
   Future<void> _pickLedger(ProposedBankRow row) async {
@@ -88,11 +147,26 @@ class _BankRowsReviewState extends State<BankRowsReview> {
       builder: (_) => _LedgerPicker(
         title: row.description,
         candidates: _ledgers.where((l) => l['id'] != _bankLedgerId).toList(),
+        onCreate: () => _createLedger(
+          groups: _allGroups,
+          initialGroup: 'Indirect Expenses',
+          // Usually the account the statement is asking for.
+          suggestedName: row.modelSuggestedName,
+        ),
       ),
     );
     if (chosen == null || !mounted) return;
     setState(() =>
         row.chooseLedger(chosen['id'] as int, chosen['name'] as String));
+  }
+
+  Future<void> _createBankLedger() async {
+    final created = await _createLedger(
+      groups: _bankClassifications,
+      initialGroup: 'Bank Accounts',
+    );
+    if (created == null || !mounted) return;
+    setState(() => _bankLedgerId = created['id'] as int);
   }
 
   Future<void> _pickDate(ProposedBankRow row) async {
@@ -198,33 +272,40 @@ class _BankRowsReviewState extends State<BankRowsReview> {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       child: Column(
         children: [
-          DropdownButtonFormField<int>(
-            isExpanded: true,
-            value: _bankLedgerId,
-            decoration: const InputDecoration(
-              labelText: 'Bank ledger for this statement',
-              border: OutlineInputBorder(),
-              isDense: true,
-              prefixIcon: Icon(Icons.account_balance, color: _kGreen),
-            ),
-            items: _bankLedgers
-                .map((l) => DropdownMenuItem<int>(
-                      value: l['id'] as int,
-                      child: Text(l['name'] as String,
-                          overflow: TextOverflow.ellipsis),
-                    ))
-                .toList(),
-            onChanged: (v) => setState(() {
-              _bankLedgerId = v;
-              for (final r in widget.rows) {
-                if (r.ledgerId == v) {
-                  r.ledgerId = null;
-                  r.ledgerName = null;
-                  r.confident = false;
-                  r.suggestionLabel = 'Was the bank ledger — choose another';
-                }
-              }
-            }),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<int>(
+                  isExpanded: true,
+                  value: _bankLedgerId,
+                  decoration: InputDecoration(
+                    labelText: 'Bank ledger for this statement',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    prefixIcon:
+                        const Icon(Icons.account_balance, color: _kGreen),
+                    helperText: _bankLedgers.isEmpty
+                        ? 'No bank or cash ledger yet — create one'
+                        : null,
+                    helperStyle: const TextStyle(color: _kReview),
+                  ),
+                  items: _bankLedgers
+                      .map((l) => DropdownMenuItem<int>(
+                            value: l['id'] as int,
+                            child: Text(l['name'] as String,
+                                overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setState(() => _setBankLedger(v)),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton.filledTonal(
+                tooltip: 'Create a bank or cash ledger',
+                icon: const Icon(Icons.add, color: _kGreen),
+                onPressed: _createBankLedger,
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           Row(
@@ -605,7 +686,14 @@ class _LedgerPicker extends StatefulWidget {
   final String title;
   final List<Map<String, dynamic>> candidates;
 
-  const _LedgerPicker({required this.title, required this.candidates});
+  /// Opens the inline create form and returns the new ledger, if any.
+  final Future<Map<String, dynamic>?> Function() onCreate;
+
+  const _LedgerPicker({
+    required this.title,
+    required this.candidates,
+    required this.onCreate,
+  });
 
   @override
   State<_LedgerPicker> createState() => _LedgerPickerState();
@@ -666,7 +754,24 @@ class _LedgerPickerState extends State<_LedgerPicker> {
                 ),
                 onChanged: _filter,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
+              // Front and centre: the account you need often does not exist
+              // yet, and leaving to create it would lose the whole review.
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.add_circle_outline, color: _kGreen),
+                title: const Text('Create a new ledger',
+                    style: TextStyle(
+                        color: _kGreen, fontWeight: FontWeight.w600)),
+                onTap: () async {
+                  final created = await widget.onCreate();
+                  if (created != null && mounted) {
+                    Navigator.pop(context, created);
+                  }
+                },
+              ),
+              const Divider(height: 1),
               Expanded(
                 child: _filtered.isEmpty
                     ? const Center(child: Text('No matching ledgers'))
@@ -686,6 +791,149 @@ class _LedgerPickerState extends State<_LedgerPicker> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Create a ledger without leaving the review.
+///
+/// Losing a whole statement's worth of corrections just to add one missing
+/// account is the reason this exists. [suggestedName] pre-fills whatever the
+/// assistant proposed, which is usually the account that is actually missing.
+class _CreateLedgerDialog extends StatefulWidget {
+  final List<Map<String, dynamic>> existing;
+  final List<String> groups;
+  final String initialGroup;
+  final String? suggestedName;
+
+  const _CreateLedgerDialog({
+    required this.existing,
+    required this.groups,
+    required this.initialGroup,
+    this.suggestedName,
+  });
+
+  @override
+  State<_CreateLedgerDialog> createState() => _CreateLedgerDialogState();
+}
+
+class _CreateLedgerDialogState extends State<_CreateLedgerDialog> {
+  late final TextEditingController _name =
+      TextEditingController(text: widget.suggestedName ?? '');
+  late String _group = widget.initialGroup;
+  String? _error;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Give the ledger a name');
+      return;
+    }
+    final clash = widget.existing.any(
+      (l) => (l['name'] as String).toLowerCase() == name.toLowerCase(),
+    );
+    if (clash) {
+      setState(() => _error = 'A ledger called "$name" already exists');
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final company = await StorageService.getSelectedCompany();
+      if (company == null) throw Exception('No company selected');
+      final id = await StorageService.saveLedger({
+        'company_id': company['id'],
+        'name': name,
+        'classification': _group,
+        'balance': 0.0,
+      });
+      if (!mounted) return;
+      Navigator.pop(context, <String, dynamic>{
+        'id': id,
+        'name': name,
+        'classification': _group,
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = 'Could not create the ledger: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New ledger'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _name,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Ledger name',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            isExpanded: true,
+            value: _group,
+            decoration: const InputDecoration(
+              labelText: 'Under group',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: widget.groups
+                .map((g) => DropdownMenuItem(
+                      value: g,
+                      child: Text(g, overflow: TextOverflow.ellipsis),
+                    ))
+                .toList(),
+            onChanged: (v) => setState(() => _group = v ?? _group),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(_error!,
+                style: TextStyle(color: Colors.red.shade700, fontSize: 12)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: _kGreen),
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Create'),
+        ),
+      ],
     );
   }
 }
