@@ -393,6 +393,126 @@ void main() {
     });
   });
 
+  group('proposing new ledgers', () {
+    Map<String, dynamic> line(String description, String? proposed,
+            {String? existing, String group = 'Sundry Debtors'}) =>
+        {
+          'date': '2026-05-02',
+          'description': description,
+          'amount': 100,
+          'direction': 'deposit',
+          'ledger': existing ?? '',
+          if (proposed != null) 'new_ledger_name': proposed,
+          'new_ledger_group': group,
+        };
+
+    test('an existing account is reused rather than duplicated', () async {
+      // The model proposes a name we already have under a fuller spelling.
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [line('UPI/1234/CR/RENT/PUNB/x/UPI', 'Rent')]
+        })
+      ]);
+
+      final row = (await ai.extractBankRows(['/nonexistent/p.jpg'])).single;
+      expect(row.ledgerId, rentLedgerId);
+      expect(row.hasProposal, isFalse,
+          reason: 'must not offer to create an account that exists');
+      expect(row.suggestionLabel, contains('existing'));
+    });
+
+    test('a partial name resolves to the fuller existing ledger', () async {
+      final company = await StorageService.getSelectedCompany();
+      final fullId = await StorageService.saveLedger({
+        'company_id': company!['id'],
+        'name': 'Naveen Kumar',
+        'classification': 'Sundry Debtors',
+        'balance': 0.0,
+      });
+
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [line('UPI/99/CR/NAVEEN/PUNB/x/UPI', 'Naveen')]
+        })
+      ]);
+
+      final row = (await ai.extractBankRows(['/nonexistent/p.jpg'])).single;
+      expect(row.ledgerId, fullId);
+      expect(row.hasProposal, isFalse);
+    });
+
+    test('unrelated short names are not merged together', () async {
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [line('UPI/1/CR/ZYX/PUNB/x/UPI', 'Zyx Traders')]
+        })
+      ]);
+
+      final row = (await ai.extractBankRows(['/nonexistent/p.jpg'])).single;
+      expect(row.hasProposal, isTrue);
+      expect(row.proposedLedgerName, 'Zyx Traders');
+    });
+
+    test('one party spelled several ways collapses to a single account',
+        () async {
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [
+            line('UPI/1/CR/BIRIYA/x', 'Biriya Stores'),
+            line('UPI/2/CR/BIRIYA/x', 'biriya stores'),
+            line('UPI/3/CR/BIRIYA/x', 'Biriya  Stores'),
+          ]
+        })
+      ]);
+
+      final rows = await ai.extractBankRows(['/nonexistent/p.jpg']);
+      final names = rows.map((r) => r.proposedLedgerName).toSet();
+      expect(names, hasLength(1),
+          reason: 'one party must not become three accounts');
+      expect(names.single, 'Biriya Stores');
+
+      final groups = rows.map((r) => r.proposedLedgerGroup).toSet();
+      expect(groups, hasLength(1));
+    });
+
+    test('a proposal is still postable via Suspense until created', () async {
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [line('UPI/7/CR/QQQQ/x', 'Qqqq Enterprises')]
+        })
+      ]);
+
+      final row = (await ai.extractBankRows(['/nonexistent/p.jpg'])).single;
+      expect(row.hasProposal, isTrue);
+      // Assigned to something real, so Post is never blocked by a proposal.
+      expect(row.ledgerId, isNotNull);
+      expect(row.isReady, isTrue);
+      expect(row.confident, isFalse);
+    });
+
+    test('an invalid group falls back to one that suits the direction',
+        () async {
+      final ai = accountingWith([
+        jsonEncode({
+          'rows': [
+            {
+              'date': '2026-05-02',
+              'description': 'Paid someone',
+              'amount': 50,
+              'direction': 'withdrawal',
+              'ledger': '',
+              'new_ledger_name': 'Wwww Supplies',
+              'new_ledger_group': 'Not A Real Group',
+            }
+          ]
+        })
+      ]);
+
+      final row = (await ai.extractBankRows(['/nonexistent/p.jpg'])).single;
+      expect(row.proposedLedgerGroup, 'Sundry Creditors');
+    });
+  });
+
   group('creating a ledger mid-review', () {
     test('a new ledger is adopted by the row that needed it', () async {
       final ai = accountingWith([
@@ -411,7 +531,8 @@ void main() {
 
       final row = (await ai.extractBankRows(['/nonexistent/p.jpg'])).single;
       // The name the model wanted is kept, so the create form can offer it.
-      expect(row.modelSuggestedName, 'Fuel Expenses');
+      expect(row.proposedLedgerName, 'Fuel Expenses');
+      expect(row.hasProposal, isTrue);
       expect(row.confident, isFalse);
 
       // What the create dialog does on save.

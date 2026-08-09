@@ -61,10 +61,15 @@ class ProposedBankRow {
   /// Why this counterparty was chosen, shown next to it in the review table.
   String suggestionLabel;
 
-  /// A ledger name the model proposed that this company does not have.
-  /// Kept so "create a new ledger" can offer it pre-filled, which is usually
-  /// exactly the account that is missing.
-  String? modelSuggestedName;
+  /// A ledger name the model proposed that this company does not have, with
+  /// the group it belongs under. The row is still assigned something postable
+  /// (usually Suspense), but the review offers this as a one-tap creation —
+  /// it is normally the account the books are actually missing.
+  String? proposedLedgerName;
+  String? proposedLedgerGroup;
+
+  bool get hasProposal =>
+      proposedLedgerName != null && proposedLedgerName!.isNotEmpty;
 
   /// True only for a guess strong enough that it does not need a second look.
   /// Suspense is never confident.
@@ -80,7 +85,8 @@ class ProposedBankRow {
     this.ledgerId,
     this.ledgerName,
     this.suggestionLabel = '',
-    this.modelSuggestedName,
+    this.proposedLedgerName,
+    this.proposedLedgerGroup,
     this.confident = false,
     this.selected = true,
   });
@@ -382,7 +388,18 @@ what is missing instead of guessing.
             'ledger': {
               'type': 'STRING',
               'description':
-                  'Counterparty ledger from the chart of accounts, or "" if unsure',
+                  'Existing ledger from the chart of accounts, or "" if none fits',
+            },
+            'new_ledger_name': {
+              'type': 'STRING',
+              'description':
+                  'When no existing ledger fits, the account this should be '
+                      'posted to, named from the narration. "" if unclear.',
+            },
+            'new_ledger_group': {
+              'type': 'STRING',
+              'description': 'Group for new_ledger_name',
+              'enum': suggestableGroups,
             },
           },
           'required': ['date', 'description', 'amount', 'direction'],
@@ -393,6 +410,25 @@ what is missing instead of guessing.
     'required': ['rows'],
   };
 
+  /// Groups the model may put a proposed new ledger under. Kept narrow: these
+  /// are the ones a bank narration can actually imply.
+  static const List<String> suggestableGroups = [
+    'Sundry Debtors',
+    'Sundry Creditors',
+    'Indirect Expenses',
+    'Direct Expenses',
+    'Indirect Income',
+    'Sales Accounts',
+    'Purchase Accounts',
+    'Duties & Taxes',
+    'Bank Accounts',
+    'Cash-in-hand',
+    'Loans (Liability)',
+    'Loans & Advances (Asset)',
+    'Fixed Assets',
+    'Capital Account',
+  ];
+
   static const String _bankSystemInstruction = '''
 You read Indian bank statements and turn them into a table of transactions.
 
@@ -401,10 +437,32 @@ Rules you must follow:
 - "deposit" means money came into the account; "withdrawal" means it left.
 - Read the amount for the transaction itself, never the running balance.
 - Amounts are plain positive numbers, no currency symbols or separators.
-- Suggest a counterparty ledger only when the narration makes it reasonably
-  clear, using an exact name from the chart of accounts. Otherwise return an
-  empty string for "ledger" so a human chooses. Never invent a ledger name.
 - Do not include header rows, opening balance lines, or closing totals.
+
+Choosing the other side of each entry:
+- Look through the chart of accounts FIRST. Use an existing ledger whenever
+  one plausibly refers to the same party or purpose, even if the narration
+  spells it differently: "NAVEEN" belongs to an existing "Naveen Kumar", and
+  "EB BILL" belongs to an existing "Electricity". Put its exact name in
+  "ledger" and leave "new_ledger_name" empty. Creating a duplicate account
+  for a party you already have is the worst outcome here.
+- Only when nothing existing fits, leave "ledger" empty and propose an
+  account in "new_ledger_name", with a group in "new_ledger_group". The user
+  will be offered it as a ledger to create, so this is expected and useful —
+  do not hold back merely because the name is not in the chart yet.
+- Be consistent across the whole statement. If the same counterparty appears
+  in several rows, every one of them must carry the identical name, spelled
+  the same way. Never split one party across two spellings.
+- Name it from the narration. Indian bank narrations bury the counterparty in
+  reference codes: "UPI/231958450352/CR/NAVEEN/PUNB/xyz/UPI" is a payment
+  involving NAVEEN, so propose "Naveen". Strip the rails and reference
+  numbers (UPI, NEFT, IMPS, RTGS, ACH, CR, DR, bank codes, long digit runs)
+  and keep the human or business name. Write it in Title Case.
+- Money coming in from a person or business is usually Sundry Debtors; money
+  going out to one is usually Sundry Creditors. A recognisable expense —
+  rent, fuel, electricity, fees, salary — is an expense group instead.
+- Only when the narration names nobody at all, such as a bare ATM withdrawal
+  or a bank charge with no payee, leave both empty.
 ''';
 
   /// Read a bank statement image (or several pages) into editable rows.
@@ -459,24 +517,41 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
       final isDeposit =
           (row['direction'] as String?)?.toLowerCase() == 'deposit';
       final named = (row['ledger'] as String?)?.trim() ?? '';
-      final fromModel = named.isEmpty ? null : byName[named.toLowerCase()];
+      final proposed = (row['new_ledger_name'] as String?)?.trim() ?? '';
 
-      if (fromModel != null) {
+      // 1. An existing ledger the model named outright.
+      var existing = named.isEmpty ? null : byName[named.toLowerCase()];
+
+      // 2. A name it gave — either an existing one it spelled differently, or
+      //    one it wants created. Resolve against the real chart first, so a
+      //    party we already have never gets a duplicate account.
+      var matchedProposal = false;
+      if (existing == null) {
+        final candidate = named.isNotEmpty ? named : proposed;
+        if (candidate.isNotEmpty) {
+          existing = _findLedgerByName(candidate, ledgers);
+          matchedProposal = existing != null;
+        }
+      }
+
+      if (existing != null) {
         rows.add(ProposedBankRow(
           date: date,
           description: description,
           amount: amount,
           isDeposit: isDeposit,
-          ledgerId: fromModel['id'] as int?,
-          ledgerName: fromModel['name'] as String?,
-          suggestionLabel: 'Suggested by the assistant',
+          ledgerId: existing['id'] as int?,
+          ledgerName: existing['name'] as String?,
+          suggestionLabel: matchedProposal
+              ? 'Matched to your existing ${existing['name']}'
+              : 'Suggested by the assistant',
           confident: true,
         ));
         continue;
       }
 
-      // The model either named a ledger this company does not have, or
-      // declined to guess. Fall back to narration matching, then Suspense.
+      // 3. Nothing existing fits. Fall back to narration matching, then
+      //    Suspense, but carry the proposal so it can be offered for creation.
       final suggestion = BankStatementService.suggestLedgerFor(
         description: description,
         isDeposit: isDeposit,
@@ -484,15 +559,10 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
       );
       if (suggestion.ledger == null) needSuspense = true;
 
-      // When the model named a ledger this company does not have, say so —
-      // whatever we fell back to. Otherwise the user sees "parked in
-      // Suspense" with no hint that a better-named account might be missing.
-      var label = suggestion.label;
-      if (named.isNotEmpty) {
-        label = 'Suggested "$named", which is not a ledger here';
-        final fallback = suggestion.ledger?['name'] as String?;
-        if (fallback != null) label = '$label; using $fallback';
-      }
+      final wanted = proposed.isNotEmpty ? proposed : (named.isNotEmpty ? named : '');
+      final label = wanted.isEmpty
+          ? suggestion.label
+          : 'No account for "$wanted" yet — create it?';
 
       rows.add(ProposedBankRow(
         date: date,
@@ -502,10 +572,16 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
         ledgerId: suggestion.ledger?['id'] as int?,
         ledgerName: suggestion.ledger?['name'] as String?,
         suggestionLabel: label,
-        modelSuggestedName: named.isEmpty ? null : named,
+        proposedLedgerName: wanted.isEmpty ? null : wanted,
+        proposedLedgerGroup: _groupFor(row['new_ledger_group'], isDeposit),
         confident: suggestion.confident,
       ));
     }
+
+    // The model is asked to spell a party the same way everywhere, but it
+    // wavers. Collapse near-identical proposals onto one spelling so a
+    // statement never creates "Naveen" and "Naveen Kumar" for one person.
+    _canonicaliseProposals(rows);
 
     if (rows.isEmpty) {
       throw const AiDraftException(
@@ -537,6 +613,123 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
   }
 
   static const String _suspenseName = 'Suspense A/c';
+
+  /// Reduce a ledger name to something comparable: lower case, no
+  /// punctuation, single spaces, and without the decorations Indian ledger
+  /// names collect ("M/s", "A/c", "Pvt Ltd").
+  static String _normalise(String name) {
+    var n = name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9 ]'), ' ');
+    for (final noise in const [
+      ' m s ',
+      ' a c ',
+      ' pvt ',
+      ' ltd ',
+      ' limited ',
+      ' private ',
+      ' and ',
+      ' the ',
+    ]) {
+      n = ' $n '.replaceAll(noise, ' ').trim();
+    }
+    return n.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  /// A name fit to become a ledger: trimmed, single-spaced.
+  static String _tidy(String name) =>
+      name.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  /// An existing ledger that means the same thing as [name], or null.
+  ///
+  /// Deliberately conservative: exact match after normalising, or one name's
+  /// words being a complete subset of the other's ("Naveen" inside "Naveen
+  /// Kumar"). Anything looser starts merging unrelated parties.
+  static Map<String, dynamic>? _findLedgerByName(
+    String name,
+    List<Map<String, dynamic>> ledgers,
+  ) {
+    final target = _normalise(name);
+    if (target.isEmpty) return null;
+    final targetWords = target.split(' ').toSet();
+
+    Map<String, dynamic>? best;
+    var bestWords = 0;
+    for (final ledger in ledgers) {
+      final candidate = _normalise(ledger['name'] as String? ?? '');
+      if (candidate.isEmpty) continue;
+      if (candidate == target) return ledger;
+
+      final words = candidate.split(' ').toSet();
+      final subset =
+          words.containsAll(targetWords) || targetWords.containsAll(words);
+      // A single shared word is only convincing if it is a real word.
+      final shared = words.intersection(targetWords);
+      if (!subset || shared.isEmpty) continue;
+      if (shared.every((w) => w.length < 4)) continue;
+
+      if (words.length > bestWords) {
+        bestWords = words.length;
+        best = ledger;
+      }
+    }
+    return best;
+  }
+
+  /// A sane group for a proposed ledger, falling back on direction.
+  static String _groupFor(dynamic raw, bool isDeposit) {
+    final group = (raw as String?)?.trim() ?? '';
+    if (suggestableGroups.contains(group)) return group;
+    return isDeposit ? 'Sundry Debtors' : 'Sundry Creditors';
+  }
+
+  /// Make every row that means the same party propose the same ledger.
+  ///
+  /// Groups proposals by their normalised form and elects one spelling — the
+  /// most frequent, then the longest, so "Naveen Kumar" beats a lone
+  /// "Naveen" — then rewrites every row in the group to it.
+  static void _canonicaliseProposals(List<ProposedBankRow> rows) {
+    final counts = <String, Map<String, int>>{};
+    for (final row in rows) {
+      if (!row.hasProposal) continue;
+      final key = _normalise(row.proposedLedgerName!);
+      if (key.isEmpty) continue;
+      // Tidy before counting, or "Biriya  Stores" and "Biriya Stores" are
+      // rival spellings and the stray space can win on length.
+      (counts[key] ??= <String, int>{}).update(
+        _tidy(row.proposedLedgerName!),
+        (n) => n + 1,
+        ifAbsent: () => 1,
+      );
+    }
+
+    final canonical = <String, String>{};
+    final groups = <String, String>{};
+    counts.forEach((key, spellings) {
+      final best = spellings.entries.toList()
+        ..sort((a, b) {
+          final byCount = b.value.compareTo(a.value);
+          return byCount != 0 ? byCount : b.key.length.compareTo(a.key.length);
+        });
+      canonical[key] = best.first.key;
+    });
+
+    // One group per party too, so the same account is not proposed under two
+    // different heads on different rows.
+    for (final row in rows) {
+      if (!row.hasProposal) continue;
+      final key = _normalise(row.proposedLedgerName!);
+      groups.putIfAbsent(key, () => row.proposedLedgerGroup ?? 'Sundry Debtors');
+    }
+
+    for (final row in rows) {
+      if (!row.hasProposal) continue;
+      final key = _normalise(row.proposedLedgerName!);
+      final name = canonical[key];
+      if (name == null) continue;
+      row.proposedLedgerName = name;
+      row.proposedLedgerGroup = groups[key];
+      row.suggestionLabel = 'No account for "$name" yet — create it?';
+    }
+  }
 
   /// The company's Suspense ledger, created if it does not exist yet.
   Future<int> _ensureSuspenseLedger() async {

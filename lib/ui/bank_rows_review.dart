@@ -149,15 +149,126 @@ class _BankRowsReviewState extends State<BankRowsReview> {
         candidates: _ledgers.where((l) => l['id'] != _bankLedgerId).toList(),
         onCreate: () => _createLedger(
           groups: _allGroups,
-          initialGroup: 'Indirect Expenses',
+          initialGroup: row.proposedLedgerGroup ?? 'Indirect Expenses',
           // Usually the account the statement is asking for.
-          suggestedName: row.modelSuggestedName,
+          suggestedName: row.proposedLedgerName,
         ),
       ),
     );
     if (chosen == null || !mounted) return;
     setState(() =>
         row.chooseLedger(chosen['id'] as int, chosen['name'] as String));
+  }
+
+  /// Every distinct account the assistant wants created, in row order.
+  List<MapEntry<String, String>> get _proposals {
+    final seen = <String>{};
+    final out = <MapEntry<String, String>>[];
+    for (final row in widget.rows) {
+      if (!row.hasProposal) continue;
+      final name = row.proposedLedgerName!;
+      if (!seen.add(name.toLowerCase())) continue;
+      out.add(MapEntry(name, row.proposedLedgerGroup ?? 'Sundry Debtors'));
+    }
+    return out;
+  }
+
+  /// Create one proposed ledger and apply it to every row asking for it.
+  Future<void> _acceptProposal(ProposedBankRow row) async {
+    final name = row.proposedLedgerName;
+    if (name == null) return;
+    final created = await _createLedger(
+      groups: _allGroups,
+      initialGroup: row.proposedLedgerGroup ?? 'Sundry Debtors',
+      suggestedName: name,
+    );
+    if (created == null || !mounted) return;
+    setState(() => _adopt(created, name));
+  }
+
+  /// Create every proposed ledger at once. A statement of forty lines can
+  /// easily want a dozen accounts, and one dialog each is not a workflow.
+  Future<void> _createAllProposals() async {
+    final proposals = _proposals;
+    if (proposals.isEmpty) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Create ${proposals.length} ledger(s)?'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: proposals
+                .map((p) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading:
+                          const Icon(Icons.add_circle_outline, color: _kGreen),
+                      title: Text(p.key),
+                      subtitle: Text(p.value),
+                    ))
+                .toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _kGreen),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Create all'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    final company = await StorageService.getSelectedCompany();
+    if (company == null || !mounted) return;
+
+    var made = 0;
+    for (final proposal in proposals) {
+      final clash = _findExisting(proposal.key);
+      final ledger = clash ??
+          <String, dynamic>{
+            'id': await StorageService.saveLedger({
+              'company_id': company['id'],
+              'name': proposal.key,
+              'classification': proposal.value,
+              'balance': 0.0,
+            }),
+            'name': proposal.key,
+          };
+      if (clash == null) made++;
+      if (!mounted) return;
+      setState(() => _adopt(ledger, proposal.key));
+    }
+
+    final ledgers = await StorageService.getLedgers();
+    if (!mounted) return;
+    setState(() => _ledgers = ledgers);
+    _toast('Created $made ledger(s) and applied them.');
+  }
+
+  Map<String, dynamic>? _findExisting(String name) {
+    for (final l in _ledgers) {
+      if ((l['name'] as String).toLowerCase() == name.toLowerCase()) return l;
+    }
+    return null;
+  }
+
+  /// Point every row that proposed [name] at the ledger now standing for it.
+  void _adopt(Map<String, dynamic> ledger, String name) {
+    for (final row in widget.rows) {
+      if (row.proposedLedgerName?.toLowerCase() != name.toLowerCase()) continue;
+      row.chooseLedger(ledger['id'] as int, ledger['name'] as String);
+      row.proposedLedgerName = null;
+      row.proposedLedgerGroup = null;
+    }
   }
 
   Future<void> _createBankLedger() async {
@@ -315,6 +426,25 @@ class _BankRowsReviewState extends State<BankRowsReview> {
               _total('Paid', _totalOut, _kOut, Icons.north_east),
             ],
           ),
+          if (_proposals.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kGreen,
+                  side: const BorderSide(color: _kGreen),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+                onPressed: _createAllProposals,
+                icon: const Icon(Icons.playlist_add, size: 18),
+                label: Text(
+                  'Create ${_proposals.length} suggested ledger(s)',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
           if (_needingReview > 0) ...[
             const SizedBox(height: 10),
             Container(
@@ -477,6 +607,26 @@ class _BankRowsReviewState extends State<BankRowsReview> {
                   ),
                   const SizedBox(height: 10),
                   _ledgerRow(row),
+                  if (row.hasProposal) ...[
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: _kGreen,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        onPressed: () => _acceptProposal(row),
+                        icon: const Icon(Icons.add_circle_outline, size: 16),
+                        label: Text(
+                          'Create "${row.proposedLedgerName}"'
+                          ' (${row.proposedLedgerGroup})',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
