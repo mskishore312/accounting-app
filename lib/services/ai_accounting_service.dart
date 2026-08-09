@@ -396,10 +396,13 @@ what is missing instead of guessing.
                   'When no existing ledger fits, the account this should be '
                       'posted to, named from the narration. "" if unclear.',
             },
+            // Free text rather than an enum: a long enum bloats the schema
+            // on every row, and _groupFor validates the answer anyway.
             'new_ledger_group': {
               'type': 'STRING',
-              'description': 'Group for new_ledger_name',
-              'enum': suggestableGroups,
+              'description':
+                  'Group for new_ledger_name, e.g. Sundry Debtors, Sundry '
+                      'Creditors, Indirect Expenses',
             },
           },
           'required': ['date', 'description', 'amount', 'direction'],
@@ -490,7 +493,10 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
       systemInstruction: _bankSystemInstruction,
       images: imagePaths,
       schema: _bankRowsSchema,
-      timeout: const Duration(seconds: 90),
+      // A full statement page is dozens of rows of JSON. Without headroom the
+      // answer is cut off mid-array and fails to parse.
+      maxOutputTokens: 32768,
+      timeout: const Duration(seconds: 180),
     );
 
     var ledgers = await StorageService.getLedgers();
@@ -637,6 +643,21 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
   /// A name fit to become a ledger: trimmed, single-spaced.
   static String _tidy(String name) =>
       name.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  /// Public entry point for [_findLedgerByName], used by the chat layer so
+  /// it never offers to create an account the books already have.
+  static Map<String, dynamic>? findExistingLedger(
+    String name,
+    List<Map<String, dynamic>> ledgers,
+  ) =>
+      _findLedgerByName(name, ledgers);
+
+  /// A group name that exists, defaulting to a safe expense head.
+  static String normaliseGroup(String? group) {
+    final g = group?.trim() ?? '';
+    if (suggestableGroups.contains(g)) return g;
+    return 'Indirect Expenses';
+  }
 
   /// An existing ledger that means the same thing as [name], or null.
   ///

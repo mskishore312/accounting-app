@@ -726,8 +726,7 @@ void main() {
       expect(reply.settled, isFalse);
     });
 
-    test('an invalid draft becomes a message rather than an exception',
-        () async {
+    test('a draft naming a missing account offers to create it', () async {
       final chat = AiChatService(
         gemini: scriptedGemini([
           jsonEncode({
@@ -741,14 +740,138 @@ void main() {
                 {'ledger': 'Cash', 'debit': 0, 'credit': 10},
               ],
             },
+            'new_ledgers': [
+              {'name': 'Imaginary Ledger', 'group': 'Indirect Expenses'}
+            ],
           })
         ]),
         accounting: accountingWith([]),
       );
 
       final reply = await chat.send(text: 'pay something', history: const []);
+      // Not postable yet, but no longer a dead end.
       expect(reply.hasDraft, isFalse);
-      expect(reply.text, contains('Imaginary Ledger'));
+      expect(reply.pendingLedgers, hasLength(1));
+      expect(reply.pendingLedgers!.single.name, 'Imaginary Ledger');
+      expect(reply.pendingLedgers!.single.group, 'Indirect Expenses');
+      expect(reply.pendingVoucher, isNotNull);
+    });
+
+    test('creating the missing account rebuilds the draft', () async {
+      final chat = AiChatService(
+        gemini: scriptedGemini([
+          jsonEncode({
+            'intent': 'voucher',
+            'reply': 'Here you go.',
+            'voucher': {
+              'voucher_type': 'Payment',
+              'date': '2026-05-07',
+              'entries': [
+                {'ledger': 'Packing Charges', 'debit': 250, 'credit': 0},
+                {'ledger': 'Cash', 'debit': 0, 'credit': 250},
+              ],
+            },
+            'new_ledgers': [
+              {'name': 'Packing Charges', 'group': 'Indirect Expenses'}
+            ],
+          })
+        ]),
+        accounting: accountingWith([]),
+      );
+
+      final reply = await chat.send(text: 'paid 250 packing', history: const []);
+      await chat.createLedgers(reply.pendingLedgers!);
+      final draft = await chat.rebuildDraft(reply.pendingVoucher!);
+
+      expect(draft.isBalanced, isTrue);
+      expect(draft.totalDebit, 250);
+      expect(
+        draft.entries.map((e) => e.ledgerName),
+        contains('Packing Charges'),
+      );
+    });
+
+    test('an account that already exists is never offered for creation',
+        () async {
+      final chat = AiChatService(
+        gemini: scriptedGemini([
+          jsonEncode({
+            'intent': 'voucher',
+            'reply': 'Here you go.',
+            'voucher': {
+              'voucher_type': 'Payment',
+              'date': '2026-05-07',
+              'entries': [
+                // Differs only in case from the real "Rent" ledger.
+                {'ledger': 'RENT', 'debit': 10, 'credit': 0},
+                {'ledger': 'Cash', 'debit': 0, 'credit': 10},
+              ],
+            },
+            'new_ledgers': [
+              {'name': 'RENT', 'group': 'Indirect Expenses'}
+            ],
+          })
+        ]),
+        accounting: accountingWith([]),
+      );
+
+      final reply = await chat.send(text: 'paid rent', history: const []);
+      expect(reply.pendingLedgers, anyOf(isNull, isEmpty));
+    });
+
+    test('a request to see a report navigates instead of answering', () async {
+      final chat = AiChatService(
+        gemini: scriptedGemini([
+          jsonEncode({
+            'intent': 'navigate',
+            'reply': 'Opening the trial balance.',
+            'navigation': {
+              'target': 'trial_balance',
+              'start_date': '2026-05-01',
+              'end_date': '2026-05-31',
+            },
+          })
+        ]),
+        accounting: accountingWith([]),
+      );
+
+      final reply =
+          await chat.send(text: 'show me the trial balance for May', history: const []);
+      expect(reply.navigation, isNotNull);
+      expect(reply.navigation!.target, 'trial_balance');
+      expect(reply.navigation!.label, 'Trial Balance');
+      expect(reply.navigation!.hasPeriod, isTrue);
+      expect(reply.navigation!.startDate, DateTime(2026, 5, 1));
+      expect(reply.navigation!.endDate, DateTime(2026, 5, 31));
+      expect(reply.hasDraft, isFalse);
+    });
+
+    test('a ledger can be named for navigation, and a bad target ignored',
+        () async {
+      final chat = AiChatService(
+        gemini: scriptedGemini([
+          jsonEncode({
+            'intent': 'navigate',
+            'reply': 'Opening it.',
+            'navigation': {'target': 'ledger', 'ledger': 'Rent'},
+          }),
+          jsonEncode({
+            'intent': 'navigate',
+            'reply': 'Hmm.',
+            'navigation': {'target': 'not_a_screen'},
+          }),
+        ]),
+        accounting: accountingWith([]),
+      );
+
+      final first = await chat.send(text: 'open the rent ledger', history: const []);
+      expect(first.navigation!.target, 'ledger');
+      expect(first.navigation!.ledgerName, 'Rent');
+      expect(first.navigation!.hasPeriod, isFalse);
+
+      // An unknown screen degrades to a plain reply rather than a dead button.
+      final second = await chat.send(text: 'open the thing', history: const []);
+      expect(second.navigation, isNull);
     });
 
     test('a bank statement intent with no image asks for one', () async {

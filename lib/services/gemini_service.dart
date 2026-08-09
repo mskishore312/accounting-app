@@ -107,6 +107,7 @@ class GeminiService {
     List<GeminiTurn> history = const [],
     Map<String, dynamic>? jsonSchema,
     double temperature = 0.2,
+    int? maxOutputTokens,
     Duration timeout = const Duration(seconds: 45),
   }) async {
     final key = await getApiKey();
@@ -134,6 +135,7 @@ class GeminiService {
       'contents': contents,
       'generationConfig': {
         'temperature': temperature,
+        if (maxOutputTokens != null) 'maxOutputTokens': maxOutputTokens,
         if (jsonSchema != null) 'responseMimeType': 'application/json',
         if (jsonSchema != null) 'responseSchema': jsonSchema,
       },
@@ -173,6 +175,20 @@ class GeminiService {
       throw GeminiException(
           'Gemini returned no answer${feedback == null ? '' : ' ($feedback)'}.');
     }
+    // A cut-off answer is still HTTP 200, and its half-written JSON fails to
+    // parse later with a message that says nothing useful. Name it here.
+    final finishReason = candidates.first['finishReason'] as String?;
+    if (finishReason == 'MAX_TOKENS') {
+      throw const GeminiException(
+        'Gemini ran out of room before it finished. For a long statement, '
+        'photograph fewer pages at a time.',
+      );
+    }
+    if (finishReason == 'SAFETY' || finishReason == 'PROHIBITED_CONTENT') {
+      throw const GeminiException(
+          'Gemini declined to answer for that image.');
+    }
+
     final content = candidates.first['content'] as Map<String, dynamic>?;
     final responseParts = content?['parts'] as List<dynamic>?;
     final text = responseParts
@@ -193,6 +209,7 @@ class GeminiService {
     List<GeminiTurn> history = const [],
     required Map<String, dynamic> schema,
     double temperature = 0.1,
+    int? maxOutputTokens,
     Duration timeout = const Duration(seconds: 45),
   }) async {
     final raw = await generate(
@@ -202,6 +219,7 @@ class GeminiService {
       history: history,
       jsonSchema: schema,
       temperature: temperature,
+      maxOutputTokens: maxOutputTokens,
       timeout: timeout,
     );
     try {

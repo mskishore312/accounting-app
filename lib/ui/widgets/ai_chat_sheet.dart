@@ -10,6 +10,8 @@ import 'package:accounting_app/services/gemini_service.dart';
 import 'package:accounting_app/services/period_service.dart';
 import 'package:accounting_app/ui/ai_settings.dart';
 import 'package:accounting_app/ui/bank_rows_review.dart';
+import 'package:accounting_app/ui/widgets/ai_chat_launcher.dart';
+import 'package:accounting_app/ui/widgets/ai_navigator.dart';
 
 const Color _kGreen = Color(0xFF2C5545);
 
@@ -173,6 +175,56 @@ class _AiChatSheetState extends State<AiChatSheet> {
 
   ChatMessage _error(String message) =>
       ChatMessage(role: ChatRole.assistant, text: message);
+
+  /// Read the attached images as a bank statement, without asking the model
+  /// to work out that that is what they are. Intent routing gets a statement
+  /// wrong often enough that this needs to be something the user can just say.
+  Future<void> _importStatement() async {
+    if (_busy || _pending.isEmpty) return;
+    final images = List<String>.from(_pending);
+    final text = _input.text.trim();
+    final outgoing = ChatMessage(
+      role: ChatRole.user,
+      text: text.isEmpty ? 'Import these statement pages.' : text,
+      images: images,
+    );
+
+    setState(() {
+      _messages.add(outgoing);
+      _input.clear();
+      _pending.clear();
+      _busy = true;
+    });
+    _scrollToEnd();
+    await _service.remember(outgoing);
+
+    try {
+      final rows =
+          await _service.accounting.extractBankRows(images, hint: text);
+      if (!mounted) return;
+      final reply = ChatMessage(
+        role: ChatRole.assistant,
+        text: 'I read ${rows.length} transactions. '
+            'Check them and post when you are ready.',
+        bankRows: rows,
+      );
+      setState(() => _messages.add(reply));
+      await _service.remember(reply);
+    } on AiDraftException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+    } on GeminiException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+      if (e.isConfigError) _checkConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error('Could not read the statement: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _scrollToEnd();
+    }
+  }
 
   Future<void> _attach(ImageSource source) async {
     try {
@@ -448,6 +500,8 @@ class _AiChatSheetState extends State<AiChatSheet> {
                 style: TextStyle(color: isUser ? Colors.white : Colors.black87),
               ),
             if (message.historyNote != null) _historyNote(message.historyNote!),
+            if (message.navigation != null) _navigationCard(message.navigation!),
+            if (message.pendingLedgers != null) _pendingLedgersCard(message),
             if (message.voucher != null) _voucherCard(message),
             if (message.bankRows != null) _rowsCard(message),
           ],
@@ -479,6 +533,175 @@ class _AiChatSheetState extends State<AiChatSheet> {
               .toList(),
         ),
       );
+
+  /// Apply any period the assistant asked for, close the panel and open the
+  /// screen. Navigation is acted on rather than merely offered: "show me the
+  /// trial balance" wants the report, not a button that says Trial Balance.
+  Future<void> _go(ChatNavigation nav) async {
+    final period = Provider.of<PeriodService>(context, listen: false);
+    if (nav.hasPeriod) {
+      period.setPeriod(nav.startDate!, nav.endDate!);
+    }
+
+    final screen = await AiNavigator.build(nav);
+    if (!mounted) return;
+    if (screen == null) {
+      setState(() => _messages.add(_error(
+          'I could not open ${nav.label}. Try it from the menu.')));
+      return;
+    }
+    Navigator.pop(context); // the chat panel
+    final navigator = appNavigatorKey.currentState;
+    if (navigator == null) return;
+    navigator.push(MaterialPageRoute(builder: (_) => screen));
+  }
+
+  Widget _navigationCard(ChatNavigation nav) => Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE0F2E9),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _kGreen),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.open_in_new, size: 15, color: _kGreen),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(nav.label,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, color: _kGreen)),
+                ),
+              ],
+            ),
+            if (nav.hasPeriod)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '${_date(nav.startDate!)} to ${_date(nav.endDate!)}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                ),
+              ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _kGreen,
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _busy ? null : () => _go(nav),
+                child: Text('Open ${nav.label}'),
+              ),
+            ),
+          ],
+        ),
+      );
+
+  static String _date(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/'
+      '${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  /// Accounts a draft is waiting on. Creating them re-runs the draft, so the
+  /// user does not have to repeat what they asked for.
+  Widget _pendingLedgersCard(ChatMessage message) {
+    final pending = message.pendingLedgers!;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E0),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFB26A00)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Needs a new account',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, color: Color(0xFFB26A00))),
+          const SizedBox(height: 6),
+          ...pending.map(
+            (p) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text('• ${p.name}  (${p.group})',
+                  style: const TextStyle(fontSize: 13)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (message.settled)
+            const Text('Created',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: _kGreen,
+                    fontWeight: FontWeight.bold))
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _kGreen,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed:
+                        _busy ? null : () => _createPending(message),
+                    child: Text(
+                        'Create ${pending.length == 1 ? 'it' : 'them'}'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() => message.settled = true),
+                    child: const Text('No thanks'),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Create the accounts a draft was missing, then rebuild the draft.
+  Future<void> _createPending(ChatMessage message) async {
+    final pending = message.pendingLedgers;
+    final draft = message.pendingVoucher;
+    if (pending == null || draft == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await _service.createLedgers(pending);
+      final voucher = await _service.rebuildDraft(draft);
+      _service.invalidateBooks();
+      if (!mounted) return;
+      final made = pending.map((p) => p.name).join(', ');
+      setState(() {
+        message.settled = true;
+        _messages.add(ChatMessage(
+          role: ChatRole.assistant,
+          text: 'Created $made. Here is the entry.',
+          voucher: voucher,
+        ));
+      });
+      await _service.remember(_messages.last);
+    } on AiDraftException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error('Could not create: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _scrollToEnd();
+    }
+  }
 
   /// What a draft in an earlier session turned into. Not actionable — the
   /// ledgers and images behind it may have changed since.
@@ -661,11 +884,11 @@ class _AiChatSheetState extends State<AiChatSheet> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_pending.isNotEmpty)
+            if (_pending.isNotEmpty) ...[
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(bottom: 6),
                   child: Wrap(
                     spacing: 4,
                     children: _pending
@@ -684,6 +907,22 @@ class _AiChatSheetState extends State<AiChatSheet> {
                   ),
                 ),
               ),
+              // Says what the image is, rather than leaving the model to guess.
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _kGreen,
+                    side: const BorderSide(color: _kGreen),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: _busy ? null : _importStatement,
+                  icon: const Icon(Icons.table_rows, size: 16),
+                  label: const Text('Read as bank statement'),
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
             Row(
               children: [
                 IconButton(
