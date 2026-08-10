@@ -218,6 +218,45 @@ class AiChatService {
     }
   }
 
+  /// Read images as one bill and return the draft, or the accounts it needs.
+  ///
+  /// Bypasses intent routing entirely: the user has said what the document
+  /// is, so there is nothing to work out.
+  Future<ChatMessage> draftFromBill(
+    List<String> images, {
+    String? hint,
+  }) async {
+    final json = await _accounting.draftVoucherJsonFromImages(
+      images,
+      hint: hint,
+    );
+    try {
+      final draft =
+          await _accounting.validateDraft(json, fallbackDate: DateTime.now());
+      return ChatMessage(
+        role: ChatRole.assistant,
+        text: 'Here is the entry from that bill.',
+        voucher: draft,
+      );
+    } on AiDraftException catch (e) {
+      // A bill from a supplier you have not traded with before is the normal
+      // case here, not an error.
+      final missing = await _missingLedgers(json, json);
+      if (missing.isNotEmpty) {
+        return ChatMessage(
+          role: ChatRole.assistant,
+          text: 'This bill needs an account you do not have yet.',
+          pendingLedgers: missing,
+          pendingVoucher: json,
+        );
+      }
+      return ChatMessage(
+        role: ChatRole.assistant,
+        text: 'I could not build an entry from that bill: ${e.message}',
+      );
+    }
+  }
+
   /// Re-validate a draft that was held back, now that its accounts exist.
   Future<ProposedVoucher> rebuildDraft(Map<String, dynamic> raw) =>
       _accounting.validateDraft(raw, fallbackDate: DateTime.now());

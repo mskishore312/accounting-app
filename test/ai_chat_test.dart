@@ -819,6 +819,64 @@ void main() {
       expect(reply.pendingLedgers, anyOf(isNull, isEmpty));
     });
 
+    test('a bill is read as one voucher, not a statement', () async {
+      final chat = AiChatService(
+        accounting: accountingWith([
+          jsonEncode({
+            'voucher_type': 'Purchase',
+            'date': '2026-05-11',
+            'narration': 'Office chairs',
+            'entries': [
+              {'ledger': 'Rent', 'debit': 3000, 'credit': 0},
+              {'ledger': 'Cash', 'debit': 0, 'credit': 3000},
+            ],
+          })
+        ]),
+      );
+
+      final reply = await chat.draftFromBill(['/nonexistent/bill.jpg']);
+      expect(reply.voucher, isNotNull);
+      expect(reply.voucher!.type, 'Purchase');
+      expect(reply.voucher!.isBalanced, isTrue);
+      expect(reply.bankRows, isNull, reason: 'a bill is not a statement');
+    });
+
+    test('a bill from an unknown supplier offers to create the account',
+        () async {
+      final chat = AiChatService(
+        accounting: accountingWith([
+          jsonEncode({
+            'voucher_type': 'Purchase',
+            'date': '2026-05-11',
+            'entries': [
+              {'ledger': 'Stationery', 'debit': 500, 'credit': 0},
+              {'ledger': 'Cash', 'debit': 0, 'credit': 500},
+            ],
+            'new_ledgers': [
+              {'name': 'Stationery', 'group': 'Indirect Expenses'}
+            ],
+          })
+        ]),
+      );
+
+      final reply = await chat.draftFromBill(['/nonexistent/bill.jpg']);
+      expect(reply.voucher, isNull);
+      expect(reply.pendingLedgers, hasLength(1));
+      expect(reply.pendingLedgers!.single.name, 'Stationery');
+
+      await chat.createLedgers(reply.pendingLedgers!);
+      final draft = await chat.rebuildDraft(reply.pendingVoucher!);
+      expect(draft.totalDebit, 500);
+    });
+
+    test('a bill with no image is refused before any network call', () async {
+      final chat = AiChatService(accounting: accountingWith([]));
+      await expectLater(
+        chat.draftFromBill(const []),
+        throwsA(isA<AiDraftException>()),
+      );
+    });
+
     test('a request to see a report navigates instead of answering', () async {
       final chat = AiChatService(
         gemini: scriptedGemini([

@@ -171,8 +171,10 @@ Rules you must follow:
 - Amounts are plain numbers without currency symbols or separators.
 - If the input does not state a date, use the fallback date given to you
   and say so in "notes".
-- If no sensible ledger exists for something, pick the closest available
-  one and explain the choice in "notes". Never invent a ledger.
+- Prefer an existing ledger, even when the document spells it differently.
+  Only when nothing in the chart fits, name the account you need and list it
+  under "new_ledgers" with its group; the user is offered it to create.
+  Never propose a second account for a party already in the chart.
 ''';
 
   /// Chart of accounts as a compact prompt block.
@@ -218,7 +220,33 @@ Transaction described by the user:
     String imagePath, {
     DateTime? today,
     String? hint,
+  }) =>
+      draftVoucherFromImages([imagePath], today: today, hint: hint);
+
+  /// Draft one voucher from one document, which may run to several photos.
+  ///
+  /// Returns the raw model answer alongside the draft so a caller can offer
+  /// to create any account the bill needs but the books lack.
+  Future<ProposedVoucher> draftVoucherFromImages(
+    List<String> imagePaths, {
+    DateTime? today,
+    String? hint,
   }) async {
+    final json = await draftVoucherJsonFromImages(imagePaths,
+        today: today, hint: hint);
+    return validateDraft(json, fallbackDate: today ?? DateTime.now());
+  }
+
+  /// The unvalidated draft for a bill, for callers that want to handle a
+  /// missing account rather than fail on it.
+  Future<Map<String, dynamic>> draftVoucherJsonFromImages(
+    List<String> imagePaths, {
+    DateTime? today,
+    String? hint,
+  }) async {
+    if (imagePaths.isEmpty) {
+      throw const AiDraftException('Attach a photo of the bill first.');
+    }
     final now = today ?? DateTime.now();
     final chart = await chartOfAccountsBlock();
     final prompt = '''
@@ -227,20 +255,47 @@ $chart
 
 Today's date is ${_iso(now)}. Use it as the fallback date.
 
-Read the attached bill or receipt image. Identify the supplier or
-customer, the document date, the taxable amount and any GST, and draft
-the matching voucher. If GST is shown separately, post it to the
-appropriate Input/Output GST ledger when one exists.
+Read the attached bill, invoice or receipt. It is ONE document, even if it
+runs to several images. Identify the supplier or customer, the document
+date, the taxable amount and any GST, and draft the matching voucher. If
+GST is shown separately, post it to the appropriate Input/Output GST
+ledger when one exists.
+
+If the document needs an account the chart does not have — a supplier or
+customer you have not traded with before — use the name you want in
+"entries" and list it in "new_ledgers" with its group. Look for an
+existing account first, even if spelled differently.
 ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
 ''';
-    final json = await _gemini.generateJson(
+    return _gemini.generateJson(
       prompt: prompt,
       systemInstruction: _systemInstruction,
-      images: [imagePath],
-      schema: _voucherSchema,
+      images: imagePaths,
+      schema: _billSchema,
+      maxOutputTokens: 8192,
+      timeout: const Duration(seconds: 120),
     );
-    return validateDraft(json, fallbackDate: now);
   }
+
+  /// The voucher schema plus the accounts a bill may need creating.
+  static final Map<String, dynamic> _billSchema = {
+    'type': 'OBJECT',
+    'properties': {
+      ..._voucherSchema['properties'] as Map<String, dynamic>,
+      'new_ledgers': {
+        'type': 'ARRAY',
+        'items': {
+          'type': 'OBJECT',
+          'properties': {
+            'name': {'type': 'STRING'},
+            'group': {'type': 'STRING'},
+          },
+          'required': ['name', 'group'],
+        },
+      },
+    },
+    'required': ['voucher_type', 'date', 'entries'],
+  };
 
   /// Answer a question about the books, grounded in the current numbers.
   Future<String> answerQuestion(

@@ -226,6 +226,49 @@ class _AiChatSheetState extends State<AiChatSheet> {
     }
   }
 
+  /// Read the attached images as one bill, invoice or receipt. The mirror of
+  /// [_importStatement]: whichever way the model would have guessed, the user
+  /// can say which it is.
+  Future<void> _draftFromBill() async {
+    if (_busy || _pending.isEmpty) return;
+    final images = List<String>.from(_pending);
+    final text = _input.text.trim();
+    final outgoing = ChatMessage(
+      role: ChatRole.user,
+      text: text.isEmpty ? 'Enter this bill.' : text,
+      images: images,
+    );
+
+    setState(() {
+      _messages.add(outgoing);
+      _input.clear();
+      _pending.clear();
+      _busy = true;
+    });
+    _scrollToEnd();
+    await _service.remember(outgoing);
+
+    try {
+      final reply = await _service.draftFromBill(images, hint: text);
+      if (!mounted) return;
+      setState(() => _messages.add(reply));
+      await _service.remember(reply);
+    } on AiDraftException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+    } on GeminiException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+      if (e.isConfigError) _checkConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error('Could not read the bill: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _scrollToEnd();
+    }
+  }
+
   Future<void> _attach(ImageSource source) async {
     try {
       if (source == ImageSource.gallery) {
@@ -907,19 +950,40 @@ class _AiChatSheetState extends State<AiChatSheet> {
                   ),
                 ),
               ),
-              // Says what the image is, rather than leaving the model to guess.
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: _kGreen,
-                    side: const BorderSide(color: _kGreen),
-                    visualDensity: VisualDensity.compact,
+              // Say what the image is, rather than leaving the model to guess.
+              // Sending without choosing still works and lets it decide.
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _kGreen,
+                        side: const BorderSide(color: _kGreen),
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                      ),
+                      onPressed: _busy ? null : _importStatement,
+                      icon: const Icon(Icons.table_rows, size: 15),
+                      label: const Text('Statement',
+                          style: TextStyle(fontSize: 12)),
+                    ),
                   ),
-                  onPressed: _busy ? null : _importStatement,
-                  icon: const Icon(Icons.table_rows, size: 16),
-                  label: const Text('Read as bank statement'),
-                ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _kGreen,
+                        side: const BorderSide(color: _kGreen),
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                      ),
+                      onPressed: _busy ? null : _draftFromBill,
+                      icon: const Icon(Icons.receipt_long, size: 15),
+                      label: const Text('Bill / receipt',
+                          style: TextStyle(fontSize: 12)),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 6),
             ],
