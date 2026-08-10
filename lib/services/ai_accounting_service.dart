@@ -125,6 +125,12 @@ class AiAccountingService {
   AiAccountingService({GeminiService? gemini})
       : _gemini = gemini ?? GeminiService();
 
+  /// Abort an in-flight request. See [GeminiService.cancelInFlight].
+  void cancel() => _gemini.cancelInFlight();
+
+  /// Allow requests again after [cancel].
+  void resume() => _gemini.resume();
+
   static const List<String> voucherTypes = [
     'Receipt',
     'Payment',

@@ -17,6 +17,11 @@ class GeminiException implements Exception {
   String toString() => message;
 }
 
+/// Thrown when the user stopped the request. Not an error to report as one.
+class GeminiCancelled extends GeminiException {
+  const GeminiCancelled() : super('Stopped.');
+}
+
 /// One earlier turn of a conversation, replayed to give the model context.
 class GeminiTurn {
   final bool fromUser;
@@ -66,9 +71,29 @@ class GeminiService {
     'gemini-2.5-pro',
   };
 
-  final http.Client _client;
+  http.Client _client;
+
+  /// Set by [cancelInFlight]; makes the next request refuse to start and the
+  /// current one, whose socket has just been closed, report itself cancelled
+  /// rather than as a network fault.
+  bool _cancelled = false;
 
   GeminiService({http.Client? client}) : _client = client ?? http.Client();
+
+  /// Abort whatever is in flight. Closing the client tears down the socket,
+  /// which is the only way to stop a request the server is still answering.
+  void cancelInFlight() {
+    _cancelled = true;
+    try {
+      _client.close();
+    } catch (_) {}
+    _client = http.Client();
+  }
+
+  /// Allow requests again after a cancellation.
+  void resume() => _cancelled = false;
+
+  bool get isCancelled => _cancelled;
 
   static Future<String?> getApiKey() => StorageService.getSetting(apiKeySetting);
 
@@ -150,6 +175,8 @@ class GeminiService {
     final uri = Uri.https(_host, '/v1beta/models/$model:generateContent',
         {'key': key.trim()});
 
+    if (_cancelled) throw const GeminiCancelled();
+
     http.Response response;
     try {
       response = await _client
@@ -158,11 +185,16 @@ class GeminiService {
               body: jsonEncode(body))
           .timeout(timeout);
     } on SocketException {
+      if (_cancelled) throw const GeminiCancelled();
       throw const GeminiException(
           'Could not reach Gemini. Check your internet connection.');
     } catch (e) {
+      // A closed client surfaces as any number of errors; if we closed it on
+      // purpose, that is a cancellation, not a failure.
+      if (_cancelled) throw const GeminiCancelled();
       throw GeminiException('Gemini request failed: $e');
     }
+    if (_cancelled) throw const GeminiCancelled();
 
     if (response.statusCode != 200) {
       throw GeminiException(_describeError(response), isConfigError: _isKeyProblem(response));

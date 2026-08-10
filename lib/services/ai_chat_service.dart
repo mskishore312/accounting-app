@@ -9,6 +9,38 @@ enum ChatRole { user, assistant }
 /// What the assistant decided the user wanted.
 enum ChatIntent { answer, voucher, bankStatement, navigate }
 
+/// One uploaded invoice and whatever came of reading it.
+///
+/// Deliberately mutable and per-image: a batch where one photo is unreadable
+/// should still post the rest, so each carries its own outcome.
+class InvoiceDraft {
+  final String imagePath;
+  ProposedVoucher? voucher;
+
+  /// Set when the invoice needs accounts the books lack; [pendingJson] is the
+  /// model's answer, held so the draft can be rebuilt once they exist.
+  List<ProposedLedger>? pendingLedgers;
+  Map<String, dynamic>? pendingJson;
+
+  String? error;
+  bool posted;
+
+  InvoiceDraft({
+    required this.imagePath,
+    this.voucher,
+    this.pendingLedgers,
+    this.pendingJson,
+    this.error,
+    this.posted = false,
+  });
+
+  bool get needsLedgers =>
+      pendingLedgers != null && pendingLedgers!.isNotEmpty;
+
+  /// Ready to write to the books right now.
+  bool get isPostable => voucher != null && !posted && error == null;
+}
+
 /// An account a draft needs that the books do not have yet.
 class ProposedLedger {
   final String name;
@@ -76,6 +108,10 @@ class ChatMessage {
   final List<ProposedLedger>? pendingLedgers;
   final Map<String, dynamic>? pendingVoucher;
 
+  /// One entry per invoice in a batch upload, reviewed and posted one at a
+  /// time or all together.
+  final List<InvoiceDraft>? invoices;
+
   bool settled;
 
   /// Row id once stored, so the message can be settled in the history too.
@@ -96,6 +132,7 @@ class ChatMessage {
     this.navigation,
     this.pendingLedgers,
     this.pendingVoucher,
+    this.invoices,
     this.settled = false,
     this.id,
     this.historyNote,
@@ -255,6 +292,87 @@ class AiChatService {
         text: 'I could not build an entry from that bill: ${e.message}',
       );
     }
+  }
+
+  /// Stop whatever is in flight, on both the chat and accounting clients.
+  void stop() {
+    _gemini.cancelInFlight();
+    _accounting.cancel();
+  }
+
+  /// Allow requests again after a stop.
+  void resume() {
+    _gemini.resume();
+    _accounting.resume();
+  }
+
+  /// Read each image as its own invoice.
+  ///
+  /// One request per invoice rather than one asking for many: a single call
+  /// over a dozen photos loses track of which total belongs to which bill.
+  /// Reads sequentially so [onProgress] means something and Stop lands
+  /// between invoices, and keeps whatever was read before the stop.
+  Future<List<InvoiceDraft>> draftInvoices(
+    List<String> images, {
+    String? hint,
+    void Function(int done, int total)? onProgress,
+  }) async {
+    if (images.isEmpty) {
+      throw const AiDraftException('Attach the invoices first.');
+    }
+    final drafts = <InvoiceDraft>[];
+    for (var i = 0; i < images.length; i++) {
+      final path = images[i];
+      onProgress?.call(i, images.length);
+      try {
+        final json =
+            await _accounting.draftVoucherJsonFromImages([path], hint: hint);
+        try {
+          final voucher = await _accounting.validateDraft(
+            json,
+            fallbackDate: DateTime.now(),
+          );
+          drafts.add(InvoiceDraft(imagePath: path, voucher: voucher));
+        } on AiDraftException catch (e) {
+          final missing = await _missingLedgers(json, json);
+          drafts.add(InvoiceDraft(
+            imagePath: path,
+            pendingLedgers: missing.isEmpty ? null : missing,
+            pendingJson: missing.isEmpty ? null : json,
+            error: missing.isEmpty ? e.message : null,
+          ));
+        }
+      } on GeminiCancelled {
+        rethrow; // keep what we have; the caller decides what to show
+      } on GeminiException catch (e) {
+        drafts.add(InvoiceDraft(imagePath: path, error: e.message));
+      } on AiDraftException catch (e) {
+        drafts.add(InvoiceDraft(imagePath: path, error: e.message));
+      }
+      onProgress?.call(i + 1, images.length);
+    }
+    return drafts;
+  }
+
+  /// Create the accounts one invoice was waiting on, then rebuild its draft.
+  Future<void> resolveInvoice(InvoiceDraft draft) async {
+    final pending = draft.pendingLedgers;
+    final json = draft.pendingJson;
+    if (pending == null || json == null) return;
+    await createLedgers(pending);
+    draft.voucher = await rebuildDraft(json);
+    draft.pendingLedgers = null;
+    draft.pendingJson = null;
+    invalidateBooks();
+  }
+
+  /// Write one reviewed invoice to the books.
+  Future<void> postInvoice(InvoiceDraft draft) async {
+    final voucher = draft.voucher;
+    if (voucher == null || draft.posted) return;
+    await _accounting.postVoucher(voucher);
+    draft.posted = true;
+    invalidateBooks();
   }
 
   /// Re-validate a draft that was held back, now that its accounts exist.

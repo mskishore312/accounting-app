@@ -877,6 +877,136 @@ void main() {
       );
     });
 
+    test('several invoices become one voucher each', () async {
+      String bill(String ledger, double amount) => jsonEncode({
+            'voucher_type': 'Purchase',
+            'date': '2026-05-12',
+            'entries': [
+              {'ledger': ledger, 'debit': amount, 'credit': 0},
+              {'ledger': 'Cash', 'debit': 0, 'credit': amount},
+            ],
+          });
+
+      final chat = AiChatService(
+        accounting: accountingWith([
+          bill('Rent', 100),
+          bill('Rent', 200),
+          bill('Rent', 300),
+        ]),
+      );
+
+      final progress = <String>[];
+      final drafts = await chat.draftInvoices(
+        ['/a.jpg', '/b.jpg', '/c.jpg'],
+        onProgress: (done, total) => progress.add('$done/$total'),
+      );
+
+      // One voucher per invoice, in the order uploaded.
+      expect(drafts, hasLength(3));
+      expect(drafts.map((d) => d.voucher!.totalDebit), [100, 200, 300]);
+      expect(drafts.every((d) => d.isPostable), isTrue);
+      expect(progress.first, '0/3');
+      expect(progress.last, '3/3');
+    });
+
+    test('one unreadable invoice does not sink the batch', () async {
+      final chat = AiChatService(
+        accounting: accountingWith([
+          jsonEncode({
+            'voucher_type': 'Purchase',
+            'date': '2026-05-12',
+            'entries': [
+              {'ledger': 'Rent', 'debit': 100, 'credit': 0},
+              {'ledger': 'Cash', 'debit': 0, 'credit': 100},
+            ],
+          }),
+          'not json at all',
+        ]),
+      );
+
+      final drafts = await chat.draftInvoices(['/a.jpg', '/b.jpg']);
+      expect(drafts, hasLength(2));
+      expect(drafts[0].isPostable, isTrue);
+      expect(drafts[1].voucher, isNull);
+      expect(drafts[1].error, isNotNull);
+    });
+
+    test('invoices post one at a time and then all at once', () async {
+      String bill(double amount) => jsonEncode({
+            'voucher_type': 'Purchase',
+            'date': '2026-05-12',
+            'entries': [
+              {'ledger': 'Rent', 'debit': amount, 'credit': 0},
+              {'ledger': 'Cash', 'debit': 0, 'credit': amount},
+            ],
+          });
+
+      final chat = AiChatService(
+        accounting: accountingWith([bill(11), bill(22)]),
+      );
+      final drafts = await chat.draftInvoices(['/a.jpg', '/b.jpg']);
+
+      await chat.postInvoice(drafts.first);
+      expect(drafts.first.posted, isTrue);
+      expect(drafts.first.isPostable, isFalse,
+          reason: 'a posted invoice must not be postable again');
+      expect(drafts.last.posted, isFalse);
+
+      // Posting again is a no-op rather than a duplicate voucher.
+      await chat.postInvoice(drafts.first);
+      await chat.postInvoice(drafts.last);
+      expect(drafts.every((d) => d.posted), isTrue);
+
+      final purchases = await StorageService.getVouchers(companyId, 'Purchase');
+      final totals = purchases.map((v) => (v['total'] as num).toDouble());
+      expect(totals, containsAll(<double>[11, 22]));
+    });
+
+    test('an invoice needing an account is resolved in place', () async {
+      final chat = AiChatService(
+        accounting: accountingWith([
+          jsonEncode({
+            'voucher_type': 'Purchase',
+            'date': '2026-05-12',
+            'entries': [
+              {'ledger': 'Printing Costs', 'debit': 400, 'credit': 0},
+              {'ledger': 'Cash', 'debit': 0, 'credit': 400},
+            ],
+            'new_ledgers': [
+              {'name': 'Printing Costs', 'group': 'Indirect Expenses'}
+            ],
+          })
+        ]),
+      );
+
+      final draft = (await chat.draftInvoices(['/a.jpg'])).single;
+      expect(draft.needsLedgers, isTrue);
+      expect(draft.isPostable, isFalse);
+
+      await chat.resolveInvoice(draft);
+      expect(draft.needsLedgers, isFalse);
+      expect(draft.isPostable, isTrue);
+      expect(draft.voucher!.totalDebit, 400);
+    });
+
+    test('stopping mid-batch raises cancellation, not a network error',
+        () async {
+      final gemini = GeminiService();
+      gemini.cancelInFlight();
+      final chat = AiChatService(
+        accounting: AiAccountingService(gemini: gemini),
+      );
+
+      await expectLater(
+        chat.draftInvoices(['/a.jpg', '/b.jpg']),
+        throwsA(isA<GeminiCancelled>()),
+      );
+
+      // And it can be used again afterwards.
+      gemini.resume();
+      expect(gemini.isCancelled, isFalse);
+    });
+
     test('a request to see a report navigates instead of answering', () async {
       final chat = AiChatService(
         gemini: scriptedGemini([

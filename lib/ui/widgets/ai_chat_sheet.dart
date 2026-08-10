@@ -52,6 +52,15 @@ class _AiChatSheetState extends State<AiChatSheet> {
   bool _busy = false;
   bool _configured = true;
 
+  /// Progress of a batch read, shown next to Stop so a long run is not a
+  /// blank spinner.
+  String? _progress;
+
+  /// One pager per invoice batch, keyed by message identity so a rebuild does
+  /// not throw the user back to the first voucher.
+  final Map<int, PageController> _pagers = {};
+  final Map<int, int> _pages = {};
+
   bool _loadingHistory = true;
 
   @override
@@ -106,6 +115,11 @@ class _AiChatSheetState extends State<AiChatSheet> {
   @override
   void dispose() {
     _input.dispose();
+    for (final pager in _pagers.values) {
+      pager.dispose();
+    }
+    // Closing the panel mid-request should not leave one running.
+    if (_busy) _service.stop();
     super.dispose();
   }
 
@@ -222,6 +236,86 @@ class _AiChatSheetState extends State<AiChatSheet> {
       setState(() => _messages.add(_error('Could not read the statement: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
+      _scrollToEnd();
+    }
+  }
+
+  /// Abandon whatever is running. The request's socket is closed, so the
+  /// answer never arrives rather than arriving unwanted.
+  void _stop() {
+    if (!_busy) return;
+    _service.stop();
+    setState(() {
+      _busy = false;
+      _progress = null;
+      _messages.add(_error('Stopped.'));
+    });
+    _scrollToEnd();
+  }
+
+  /// Read each attached image as its own invoice, into one reviewable batch.
+  Future<void> _readInvoices() async {
+    if (_busy || _pending.isEmpty) return;
+    final images = List<String>.from(_pending);
+    final text = _input.text.trim();
+    final outgoing = ChatMessage(
+      role: ChatRole.user,
+      text: text.isEmpty
+          ? 'Enter these ${images.length} invoices.'
+          : text,
+      images: images,
+    );
+
+    _service.resume();
+    setState(() {
+      _messages.add(outgoing);
+      _input.clear();
+      _pending.clear();
+      _busy = true;
+      _progress = 'Reading invoice 1 of ${images.length}…';
+    });
+    _scrollToEnd();
+    await _service.remember(outgoing);
+
+    try {
+      final drafts = await _service.draftInvoices(
+        images,
+        hint: text,
+        onProgress: (done, total) {
+          if (!mounted || done >= total) return;
+          setState(() =>
+              _progress = 'Reading invoice ${done + 1} of $total…');
+        },
+      );
+      if (!mounted) return;
+      final read = drafts.where((d) => d.error == null).length;
+      final reply = ChatMessage(
+        role: ChatRole.assistant,
+        text: 'Read $read of ${images.length} invoices. '
+            'Swipe through them and post when you are happy.',
+        invoices: drafts,
+      );
+      setState(() => _messages.add(reply));
+      await _service.remember(reply);
+    } on GeminiCancelled {
+      // _stop already said so.
+    } on AiDraftException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+    } on GeminiException catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error(e.message)));
+      if (e.isConfigError) _checkConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _messages.add(_error('Could not read the invoices: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _progress = null;
+        });
+      }
       _scrollToEnd();
     }
   }
@@ -404,7 +498,20 @@ class _AiChatSheetState extends State<AiChatSheet> {
                       itemBuilder: (_, i) => _bubble(_messages[i]),
                     ),
             ),
-            if (_busy) const LinearProgressIndicator(minHeight: 2),
+            if (_busy) ...[
+              const LinearProgressIndicator(minHeight: 2),
+              if (_progress != null)
+                Container(
+                  width: double.infinity,
+                  color: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  child: Text(
+                    _progress!,
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                  ),
+                ),
+            ],
             _composer(),
           ],
         ),
@@ -545,6 +652,7 @@ class _AiChatSheetState extends State<AiChatSheet> {
             if (message.historyNote != null) _historyNote(message.historyNote!),
             if (message.navigation != null) _navigationCard(message.navigation!),
             if (message.pendingLedgers != null) _pendingLedgersCard(message),
+            if (message.invoices != null) _invoiceBatchCard(message),
             if (message.voucher != null) _voucherCard(message),
             if (message.bankRows != null) _rowsCard(message),
           ],
@@ -743,6 +851,324 @@ class _AiChatSheetState extends State<AiChatSheet> {
     } finally {
       if (mounted) setState(() => _busy = false);
       _scrollToEnd();
+    }
+  }
+
+  /// A batch of invoices: how many there are, one voucher per page swiped
+  /// left to right, and posting either one at a time or the lot.
+  Widget _invoiceBatchCard(ChatMessage message) {
+    final invoices = message.invoices!;
+    final controller = _pagers.putIfAbsent(
+      identityHashCode(message),
+      () => PageController(),
+    );
+    final page = _pages[identityHashCode(message)] ?? 0;
+    final outstanding = invoices.where((d) => d.isPostable).length;
+    final posted = invoices.where((d) => d.posted).length;
+
+    // Once everything is in the books the review has nothing left to say.
+    if (posted == invoices.length) {
+      return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE0F2E9),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _kGreen),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle, size: 18, color: _kGreen),
+            const SizedBox(width: 8),
+            Text('Posted all $posted vouchers',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, color: _kGreen)),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _kGreen),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // The count, matching the number of invoices uploaded.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: const BoxDecoration(
+              color: _kGreen,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(9)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.receipt_long, size: 16, color: Colors.white),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${invoices.length} voucher${invoices.length == 1 ? '' : 's'}'
+                    '${posted > 0 ? ' · $posted posted' : ''}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13),
+                  ),
+                ),
+                Text('${page + 1} / ${invoices.length}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 232,
+            child: PageView.builder(
+              controller: controller,
+              itemCount: invoices.length,
+              onPageChanged: (i) =>
+                  setState(() => _pages[identityHashCode(message)] = i),
+              itemBuilder: (_, i) => _invoicePage(invoices[i], i),
+            ),
+          ),
+          // Swipe is the primary gesture; arrows make it discoverable.
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chevron_left, size: 20),
+                color: _kGreen,
+                onPressed: page == 0
+                    ? null
+                    : () => controller.previousPage(
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOut,
+                        ),
+              ),
+              Row(
+                children: List.generate(
+                  invoices.length,
+                  (i) => Container(
+                    width: 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: i == page
+                          ? _kGreen
+                          : (invoices[i].posted
+                              ? _kGreen.withOpacity(0.35)
+                              : Colors.grey.shade400),
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.chevron_right, size: 20),
+                color: _kGreen,
+                onPressed: page >= invoices.length - 1
+                    ? null
+                    : () => controller.nextPage(
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOut,
+                        ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: _kGreen),
+                onPressed: _busy || outstanding == 0
+                    ? null
+                    : () => _postAllInvoices(message),
+                icon: const Icon(Icons.done_all, size: 18),
+                label: Text(outstanding == 0
+                    ? 'Nothing left to post'
+                    : 'Post all $outstanding'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One invoice's voucher, or why there isn't one.
+  Widget _invoicePage(InvoiceDraft draft, int index) {
+    final voucher = draft.voucher;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (draft.error != null) ...[
+              Row(
+                children: [
+                  Icon(Icons.error_outline,
+                      size: 16, color: Colors.red.shade700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text('Invoice ${index + 1} could not be read',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red.shade700)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(draft.error!, style: const TextStyle(fontSize: 12)),
+            ] else if (draft.needsLedgers) ...[
+              const Text('Needs a new account',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, color: Color(0xFFB26A00))),
+              const SizedBox(height: 4),
+              ...draft.pendingLedgers!.map((p) => Text('• ${p.name}  (${p.group})',
+                  style: const TextStyle(fontSize: 12))),
+              const SizedBox(height: 8),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _kGreen,
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _busy ? null : () => _resolveInvoice(draft),
+                child: const Text('Create and continue'),
+              ),
+            ] else if (voucher != null) ...[
+              Row(
+                children: [
+                  Text(
+                    '${voucher.type} • '
+                    '${_date(voucher.date)}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, color: _kGreen),
+                  ),
+                  const Spacer(),
+                  if (draft.posted)
+                    const Text('Posted',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: _kGreen,
+                            fontWeight: FontWeight.bold)),
+                ],
+              ),
+              const Divider(height: 12),
+              ...voucher.entries.map(
+                (e) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 1),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(e.ledgerName,
+                            style: const TextStyle(fontSize: 12),
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      Text(
+                        e.debit > 0
+                            ? '${e.debit.toStringAsFixed(2)} Dr'
+                            : '${e.credit.toStringAsFixed(2)} Cr',
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (voucher.narration.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(voucher.narration,
+                    style: const TextStyle(
+                        fontSize: 11, fontStyle: FontStyle.italic)),
+              ],
+              for (final warning in voucher.warnings)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(warning,
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.amber.shade900)),
+                ),
+              const SizedBox(height: 8),
+              if (!draft.posted)
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _kGreen,
+                      side: const BorderSide(color: _kGreen),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: _busy ? null : () => _postOneInvoice(draft),
+                    child: Text('Post this one (${index + 1})'),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _postOneInvoice(InvoiceDraft draft) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _service.postInvoice(draft);
+    } on AiDraftException catch (e) {
+      if (mounted) setState(() => _messages.add(_error(e.message)));
+    } catch (e) {
+      if (mounted) setState(() => _messages.add(_error('Could not post: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _postAllInvoices(ChatMessage message) async {
+    final invoices = message.invoices!;
+    if (_busy) return;
+    setState(() => _busy = true);
+    var done = 0;
+    try {
+      for (final draft in invoices) {
+        if (!draft.isPostable) continue;
+        await _service.postInvoice(draft);
+        done++;
+      }
+      if (!mounted) return;
+      final confirmation = ChatMessage(
+        role: ChatRole.assistant,
+        text: 'Posted $done voucher${done == 1 ? '' : 's'} to the books.',
+      );
+      setState(() => _messages.add(confirmation));
+      await _service.remember(confirmation);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _messages
+            .add(_error('Posted $done, then stopped: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _scrollToEnd();
+    }
+  }
+
+  Future<void> _resolveInvoice(InvoiceDraft draft) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _service.resolveInvoice(draft);
+    } on AiDraftException catch (e) {
+      if (mounted) setState(() => _messages.add(_error(e.message)));
+    } catch (e) {
+      if (mounted) setState(() => _messages.add(_error('Could not create: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -977,14 +1403,32 @@ class _AiChatSheetState extends State<AiChatSheet> {
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                       ),
-                      onPressed: _busy ? null : _draftFromBill,
+                      // One image is one bill; several are usually several
+                      // bills, so the batch reader is the sensible default.
+                      onPressed: _busy
+                          ? null
+                          : (_pending.length > 1
+                              ? _readInvoices
+                              : _draftFromBill),
                       icon: const Icon(Icons.receipt_long, size: 15),
-                      label: const Text('Bill / receipt',
-                          style: TextStyle(fontSize: 12)),
+                      label: Text(
+                        _pending.length > 1
+                            ? '${_pending.length} invoices'
+                            : 'Bill / receipt',
+                        style: const TextStyle(fontSize: 12),
+                      ),
                     ),
                   ),
                 ],
               ),
+              if (_pending.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Several images of one bill? Use Statement or just Send.',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                  ),
+                ),
               const SizedBox(height: 6),
             ],
             Row(
@@ -1008,10 +1452,19 @@ class _AiChatSheetState extends State<AiChatSheet> {
                   ),
                 ),
                 const SizedBox(width: 4),
-                IconButton(
-                  icon: const Icon(Icons.send, color: _kGreen),
-                  onPressed: _busy ? null : _send,
-                ),
+                // Becomes Stop while a request is running, so a long batch or
+                // a slow read can always be abandoned.
+                if (_busy)
+                  IconButton(
+                    icon: const Icon(Icons.stop_circle, color: Color(0xFFC62828)),
+                    tooltip: 'Stop',
+                    onPressed: _stop,
+                  )
+                else
+                  IconButton(
+                    icon: const Icon(Icons.send, color: _kGreen),
+                    onPressed: _send,
+                  ),
               ],
             ),
           ],
