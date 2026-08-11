@@ -133,6 +133,7 @@ class GeminiService {
     Map<String, dynamic>? jsonSchema,
     double temperature = 0.2,
     int? maxOutputTokens,
+    String? thinkingLevel,
     Duration timeout = const Duration(seconds: 45),
   }) async {
     final key = await getApiKey();
@@ -161,6 +162,12 @@ class GeminiService {
       'generationConfig': {
         'temperature': temperature,
         if (maxOutputTokens != null) 'maxOutputTokens': maxOutputTokens,
+        // Gemini 3 models think by default, and those thinking tokens come
+        // out of maxOutputTokens — the two share one budget. Reading rows off
+        // a statement is transcription, not reasoning, so leaving thinking on
+        // spends the whole allowance before a single row is written.
+        if (thinkingLevel != null)
+          'thinkingConfig': {'thinkingLevel': thinkingLevel},
         if (jsonSchema != null) 'responseMimeType': 'application/json',
         if (jsonSchema != null) 'responseSchema': jsonSchema,
       },
@@ -211,9 +218,12 @@ class GeminiService {
     // parse later with a message that says nothing useful. Name it here.
     final finishReason = candidates.first['finishReason'] as String?;
     if (finishReason == 'MAX_TOKENS') {
+      // Usually the model spending its whole allowance on thinking, which is
+      // why extraction asks for minimal. Say both, since only one is
+      // something the user can act on.
       throw const GeminiException(
-        'Gemini ran out of room before it finished. For a long statement, '
-        'photograph fewer pages at a time.',
+        'Gemini stopped before finishing its answer. Try again, or use fewer '
+        'pages at once if it keeps happening.',
       );
     }
     if (finishReason == 'SAFETY' || finishReason == 'PROHIBITED_CONTENT') {
@@ -242,6 +252,7 @@ class GeminiService {
     required Map<String, dynamic> schema,
     double temperature = 0.1,
     int? maxOutputTokens,
+    String? thinkingLevel,
     Duration timeout = const Duration(seconds: 45),
   }) async {
     final raw = await generate(
@@ -252,6 +263,7 @@ class GeminiService {
       jsonSchema: schema,
       temperature: temperature,
       maxOutputTokens: maxOutputTokens,
+      thinkingLevel: thinkingLevel,
       timeout: timeout,
     );
     try {

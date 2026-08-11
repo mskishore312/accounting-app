@@ -279,6 +279,7 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
       images: imagePaths,
       schema: _billSchema,
       maxOutputTokens: 8192,
+      thinkingLevel: 'minimal',
       timeout: const Duration(seconds: 120),
     );
   }
@@ -555,8 +556,11 @@ ${hint == null || hint.trim().isEmpty ? '' : '\nUser note: $hint'}
       images: imagePaths,
       schema: _bankRowsSchema,
       // A full statement page is dozens of rows of JSON. Without headroom the
-      // answer is cut off mid-array and fails to parse.
+      // answer is cut off mid-array and fails to parse — and thinking tokens
+      // come out of the same budget, so they are turned down to leave it for
+      // the rows.
       maxOutputTokens: 32768,
+      thinkingLevel: 'minimal',
       timeout: const Duration(seconds: 180),
     );
 

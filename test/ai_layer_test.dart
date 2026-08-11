@@ -179,6 +179,56 @@ void main() {
       );
     });
 
+    test('extraction turns thinking down so the budget goes to the answer',
+        () async {
+      final sent = <Map<String, dynamic>>[];
+      final ai = AiAccountingService(
+        gemini: capturingGemini(
+          sent,
+          jsonEncode({
+            'rows': [
+              {
+                'date': '2026-05-05',
+                'description': 'x',
+                'amount': 1,
+                'direction': 'deposit',
+              }
+            ]
+          }),
+        ),
+      );
+      await ai.extractBankRows(['/nonexistent/p.jpg']);
+
+      final config = sent.single['generationConfig'] as Map<String, dynamic>;
+      // Gemini 3 spends maxOutputTokens on thinking as well as output, so a
+      // transcription job must not leave thinking on its default.
+      expect(config['thinkingConfig'], {'thinkingLevel': 'minimal'});
+      expect(config['maxOutputTokens'], greaterThan(8000));
+    });
+
+    test('an answer cut short is reported as such, not as bad JSON', () async {
+      final client = MockClient((request) async => http.Response(
+            jsonEncode({
+              'candidates': [
+                {
+                  'finishReason': 'MAX_TOKENS',
+                  'content': {
+                    'parts': [
+                      {'text': '{"rows": [{"date": "2026-05'}
+                    ]
+                  }
+                }
+              ]
+            }),
+            200,
+          ));
+      await expectLater(
+        GeminiService(client: client).generate(prompt: 'hi'),
+        throwsA(isA<GeminiException>().having((e) => e.message, 'message',
+            contains('stopped before finishing'))),
+      );
+    });
+
     test('rate limiting is surfaced plainly', () async {
       final service = fakeGemini('quota', status: 429);
       await expectLater(
