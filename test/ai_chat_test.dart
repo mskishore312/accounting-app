@@ -369,6 +369,63 @@ void main() {
       expect((gotDebit['debit'] as num).toDouble(), 1000);
     });
 
+    test('cash paid into the bank is a Contra, not a Receipt', () async {
+      final company = await StorageService.getSelectedCompany();
+      final cash = (await StorageService.getLedgers())
+          .firstWhere((l) => l['name'] == 'Cash');
+      expect(company, isNotNull);
+
+      final ai = accountingWith([]);
+      await ai.postBankRows(
+        bankLedgerId: bankLedgerId,
+        rows: [
+          ProposedBankRow(
+            date: DateTime(2026, 5, 20),
+            description: 'Cash deposit',
+            amount: 7000,
+            isDeposit: true,
+            ledgerId: cash['id'] as int,
+            ledgerName: 'Cash',
+          ),
+        ],
+      );
+
+      final contras = await StorageService.getVouchers(companyId, 'Contra');
+      final deposit = contras.firstWhere(
+          (v) => (v['total'] as num).toDouble() == 7000,
+          orElse: () => {});
+      expect(deposit, isNotEmpty,
+          reason: 'both sides are cash/bank, so nothing was earned');
+
+      // Direction is unchanged: money arriving still debits the bank.
+      final entries =
+          await StorageService.getVoucherEntries(deposit['id'] as int);
+      final debit = entries.firstWhere((e) => (e['debit'] as num) > 0);
+      final credit = entries.firstWhere((e) => (e['credit'] as num) > 0);
+      expect(debit['ledger_id'], bankLedgerId);
+      expect(credit['ledger_id'], cash['id']);
+    });
+
+    test('an ordinary expense stays a Payment', () async {
+      final ai = accountingWith([]);
+      await ai.postBankRows(
+        bankLedgerId: bankLedgerId,
+        rows: [
+          ProposedBankRow(
+            date: DateTime(2026, 5, 21),
+            description: 'Rent',
+            amount: 8800,
+            isDeposit: false,
+            ledgerId: rentLedgerId,
+            ledgerName: 'Rent',
+          ),
+        ],
+      );
+      final payments = await StorageService.getVouchers(companyId, 'Payment');
+      expect(payments.any((v) => (v['total'] as num).toDouble() == 8800),
+          isTrue);
+    });
+
     test('a row using the bank ledger on both sides is refused by name',
         () async {
       final ai = accountingWith([]);

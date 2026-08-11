@@ -54,8 +54,17 @@ class _BankRowsReviewState extends State<BankRowsReview> {
   List<ProposedBankRow> get _selected =>
       widget.rows.where((r) => r.selected).toList();
 
-  int get _needingReview =>
-      _selected.where((r) => r.ledgerId == null || !r.confident).length;
+  /// Show only the rows still wanting a decision. With 36 lines and 2 to fix,
+  /// scrolling for them is the whole job.
+  bool _onlyReview = false;
+
+  bool _wantsAttention(ProposedBankRow r) => r.ledgerId == null || !r.confident;
+
+  int get _needingReview => _selected.where(_wantsAttention).length;
+
+  List<ProposedBankRow> get _visible => _onlyReview
+      ? widget.rows.where(_wantsAttention).toList()
+      : widget.rows;
 
   double get _totalIn => _selected
       .where((r) => r.isDeposit)
@@ -147,6 +156,13 @@ class _BankRowsReviewState extends State<BankRowsReview> {
       builder: (_) => _LedgerPicker(
         title: row.description,
         candidates: _ledgers.where((l) => l['id'] != _bankLedgerId).toList(),
+        // The statement's own ledger is missing from the list on purpose, and
+        // that is baffling without being told — especially for a contra,
+        // where the account you want is exactly the one that vanished.
+        excludedName: _bankLedgers
+            .cast<Map<String, dynamic>?>()
+            .firstWhere((l) => l!['id'] == _bankLedgerId, orElse: () => null)
+            ?['name'] as String?,
         onCreate: () => _createLedger(
           groups: _allGroups,
           initialGroup: row.proposedLedgerGroup ?? 'Indirect Expenses',
@@ -364,11 +380,27 @@ class _BankRowsReviewState extends State<BankRowsReview> {
               children: [
                 _summary(),
                 Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    itemCount: widget.rows.length,
-                    itemBuilder: (_, i) => _rowCard(widget.rows[i]),
-                  ),
+                  child: Builder(builder: (_) {
+                    final rows = _visible;
+                    if (rows.isEmpty) {
+                      return const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text(
+                            'Nothing left to review — every row has a ledger '
+                            'you have confirmed.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: _kGreen),
+                          ),
+                        ),
+                      );
+                    }
+                    return ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                      itemCount: rows.length,
+                      itemBuilder: (_, i) => _rowCard(rows[i]),
+                    );
+                  }),
                 ),
                 _footer(),
               ],
@@ -465,6 +497,17 @@ class _BankRowsReviewState extends State<BankRowsReview> {
                       'look at the ledger',
                       style: const TextStyle(fontSize: 12, color: _kReview),
                     ),
+                  ),
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: _kReview,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: () =>
+                        setState(() => _onlyReview = !_onlyReview),
+                    child: Text(_onlyReview ? 'Show all' : 'Show these',
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
@@ -839,10 +882,14 @@ class _LedgerPicker extends StatefulWidget {
   /// Opens the inline create form and returns the new ledger, if any.
   final Future<Map<String, dynamic>?> Function() onCreate;
 
+  /// The statement's own ledger, deliberately absent from [candidates].
+  final String? excludedName;
+
   const _LedgerPicker({
     required this.title,
     required this.candidates,
     required this.onCreate,
+    this.excludedName,
   });
 
   @override
@@ -937,6 +984,27 @@ class _LedgerPickerState extends State<_LedgerPicker> {
                         ),
                       ),
               ),
+              if (widget.excludedName != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline, size: 14, color: _kReview),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '"${widget.excludedName}" is this statement\'s own '
+                          'ledger, so it cannot also be the other side. To '
+                          'post a transfer into it, change the bank ledger '
+                          'at the top to the account the statement belongs to.',
+                          style: const TextStyle(
+                              fontSize: 11, color: _kReview, height: 1.3),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
         ),

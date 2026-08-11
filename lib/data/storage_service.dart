@@ -1311,12 +1311,26 @@ class StorageService {
     if (company == null) throw Exception('No company selected');
     final db = await _instance.database;
 
+    // Classifications that make a ledger the cash or bank side of an entry.
+    // Money moving between two of them is a transfer, not income or expense.
+    const cashOrBank = {'Bank Accounts', 'Bank OD A/c', 'Cash-in-hand'};
+    final ledgers = await getLedgers();
+    final classificationOf = {
+      for (final l in ledgers)
+        l['id'] as int: l['classification'] as String? ?? '',
+    };
+
     return db.transaction<int>((txn) async {
       int imported = 0;
       for (final transaction in transactions) {
         final isDeposit = transaction['is_deposit'] as bool;
-        final type = isDeposit ? 'Receipt' : 'Payment';
-        final prefix = isDeposit ? 'R' : 'P';
+        // Cash paid into the bank, or moved between accounts, is a Contra —
+        // both sides are cash or bank, so nothing has been earned or spent.
+        final isContra = cashOrBank.contains(
+          classificationOf[transaction['counterpart_ledger_id'] as int] ?? '',
+        );
+        final type = isContra ? 'Contra' : (isDeposit ? 'Receipt' : 'Payment');
+        final prefix = isContra ? 'C' : (isDeposit ? 'R' : 'P');
         final result = await txn.rawQuery('''
           SELECT voucher_number FROM Vouchers
           WHERE type = ? AND voucher_number LIKE '$prefix%'
