@@ -37,12 +37,16 @@ class StorageService {
     String path = join(dbPath, 'accounting_app.db');
     return await openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
-      }
+      },
+      // Table rebuilds that need foreign keys off cannot run in onUpgrade,
+      // which sqflite wraps in a transaction. They are flagged there and
+      // finished here.
+      onOpen: applyPendingRebuild,
     );
   }
 
@@ -104,11 +108,12 @@ class StorageService {
       CREATE TABLE Vouchers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         company_id INTEGER NOT NULL,
-        voucher_number TEXT UNIQUE,
+        voucher_number TEXT,
         voucher_date TEXT,
         type TEXT,
         total REAL,
-        FOREIGN KEY (company_id) REFERENCES Companies(id) ON DELETE CASCADE
+        FOREIGN KEY (company_id) REFERENCES Companies(id) ON DELETE CASCADE,
+        UNIQUE (company_id, type, voucher_number)
       )
     ''');
 
@@ -243,6 +248,84 @@ class StorageService {
     }
     if (oldVersion < 10) {
       await _createChatMessagesTable(db);
+    }
+    if (oldVersion < 11) {
+      await _rebuildVouchersPerCompany(db);
+      await _createReportIndexes(db);
+    }
+  }
+
+  /// Voucher numbers were globally unique, so two companies could not both
+  /// have an "R1" — and [getNextVoucherNumber] read the highest number across
+  /// every company, so a second company's books started at whatever the first
+  /// had reached. Numbering belongs to a company and a voucher type.
+  ///
+  /// SQLite cannot drop a column constraint, so the table is rebuilt. Foreign
+  /// keys must be off while it is: DROP TABLE fires ON DELETE CASCADE, and
+  /// VoucherEntries hangs off Vouchers, so dropping with them on would take
+  /// every line item with it. sqflite runs onUpgrade inside a transaction
+  /// where the pragma is ignored, so the work is deferred to [applyPendingRebuild],
+  /// which runs on open, outside any transaction.
+  static Future<void> _rebuildVouchersPerCompany(DatabaseExecutor db) async {
+    await db.insert(
+      'Settings',
+      {'key': _pendingVoucherRebuild, 'value': '1'},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static const String _pendingVoucherRebuild = 'pending_voucher_rebuild';
+
+  /// Indexes for the columns every report joins and filters on. Their absence
+  /// is why reports slow as the books grow.
+  static Future<void> _createReportIndexes(DatabaseExecutor db) async {
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_entries_voucher ON VoucherEntries(voucher_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_entries_ledger ON VoucherEntries(ledger_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_vouchers_company_date ON Vouchers(company_id, voucher_date)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ledgers_company ON Ledgers(company_id)');
+  }
+
+  /// Finish the v11 voucher-table rebuild. Runs outside a transaction so
+  /// `PRAGMA foreign_keys` actually takes effect; a no-op once done.
+  static Future<void> applyPendingRebuild(Database db) async {
+    final pending = await db.query('Settings',
+        where: 'key = ?', whereArgs: [_pendingVoucherRebuild], limit: 1);
+    if (pending.isEmpty) return;
+
+    await db.execute('PRAGMA foreign_keys = OFF');
+    try {
+      await db.transaction((txn) async {
+        await txn.execute('''
+          CREATE TABLE Vouchers_v11 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            voucher_number TEXT,
+            voucher_date TEXT,
+            type TEXT,
+            total REAL,
+            FOREIGN KEY (company_id) REFERENCES Companies(id) ON DELETE CASCADE,
+            UNIQUE (company_id, type, voucher_number)
+          )
+        ''');
+        await txn.execute('''
+          INSERT INTO Vouchers_v11 (id, company_id, voucher_number, voucher_date, type, total)
+          SELECT id, company_id, voucher_number, voucher_date, type, total FROM Vouchers
+        ''');
+        await txn.execute('DROP TABLE Vouchers');
+        await txn.execute('ALTER TABLE Vouchers_v11 RENAME TO Vouchers');
+        await txn.execute(
+            'CREATE INDEX IF NOT EXISTS idx_voucher_date ON Vouchers(voucher_date)');
+        await txn.execute(
+            'CREATE INDEX IF NOT EXISTS idx_vouchers_company_date ON Vouchers(company_id, voucher_date)');
+        await txn.delete('Settings',
+            where: 'key = ?', whereArgs: [_pendingVoucherRebuild]);
+      });
+    } finally {
+      await db.execute('PRAGMA foreign_keys = ON');
     }
   }
 
@@ -770,32 +853,50 @@ class StorageService {
   }
 
   // Voucher number operations
-  static Future<String> getNextVoucherNumber(String voucherType) async {
-    final db = await _instance.database;
-
-    String prefix = '';
+  /// Prefix for each voucher type's numbering series.
+  static String voucherPrefix(String voucherType) {
     switch (voucherType.toLowerCase()) {
-      case 'receipt': prefix = 'R'; break;
-      case 'payment': prefix = 'P'; break;
-      case 'journal': prefix = 'J'; break;
-      case 'contra': prefix = 'C'; break;
-      case 'sales': prefix = 'S'; break;
-      case 'purchase': prefix = 'B'; break;
-      default: prefix = 'V';
+      case 'receipt':
+        return 'R';
+      case 'payment':
+        return 'P';
+      case 'journal':
+        return 'J';
+      case 'contra':
+        return 'C';
+      case 'sales':
+        return 'S';
+      case 'purchase':
+        return 'B';
+      default:
+        return 'V';
     }
+  }
+
+  /// The next number in this company's series for [voucherType].
+  ///
+  /// Scoped to the company: each set of books numbers its own vouchers from 1,
+  /// which is what the owner of those books expects to see.
+  static Future<String> getNextVoucherNumber(
+    String voucherType, {
+    int? companyId,
+    DatabaseExecutor? executor,
+  }) async {
+    final db = executor ?? await _instance.database;
+    final id = companyId ?? (await getSelectedCompany())?['id'];
+    final prefix = voucherPrefix(voucherType);
 
     final result = await db.rawQuery('''
       SELECT voucher_number FROM Vouchers
-      WHERE type = ? AND voucher_number LIKE '$prefix%'
+      WHERE company_id = ? AND type = ? AND voucher_number LIKE ?
       ORDER BY CAST(SUBSTR(voucher_number, 2) AS INTEGER) DESC
       LIMIT 1
-    ''', [voucherType]);
+    ''', [id, voucherType, '$prefix%']);
 
     int nextNumber = 1;
     if (result.isNotEmpty) {
       final lastNumber = result.first['voucher_number'] as String;
-      final numStr = lastNumber.substring(1);
-      nextNumber = (int.tryParse(numStr) ?? 0) + 1;
+      nextNumber = (int.tryParse(lastNumber.substring(1)) ?? 0) + 1;
     }
 
     return '$prefix$nextNumber';
@@ -1330,19 +1431,13 @@ class StorageService {
           classificationOf[transaction['counterpart_ledger_id'] as int] ?? '',
         );
         final type = isContra ? 'Contra' : (isDeposit ? 'Receipt' : 'Payment');
-        final prefix = isContra ? 'C' : (isDeposit ? 'R' : 'P');
-        final result = await txn.rawQuery('''
-          SELECT voucher_number FROM Vouchers
-          WHERE type = ? AND voucher_number LIKE '$prefix%'
-          ORDER BY CAST(SUBSTR(voucher_number, 2) AS INTEGER) DESC
-          LIMIT 1
-        ''', [type]);
-        final lastNumber = result.isEmpty
-            ? 0
-            : int.tryParse(
-                    (result.first['voucher_number'] as String).substring(1)) ??
-                0;
-        final voucherNumber = '$prefix${lastNumber + 1}';
+        // Same company-scoped series the rest of the app uses; this used to
+        // carry its own copy of the query, without the company filter.
+        final voucherNumber = await getNextVoucherNumber(
+          type,
+          companyId: company['id'] as int,
+          executor: txn,
+        );
         final amount = (transaction['amount'] as num).toDouble();
         final description = transaction['description'] as String? ?? '';
         final counterpartLedgerId = transaction['counterpart_ledger_id'] as int;
